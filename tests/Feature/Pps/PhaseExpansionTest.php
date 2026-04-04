@@ -257,6 +257,82 @@ class PhaseExpansionTest extends TestCase
             ->assertJsonPath('viewer_scope.is_class_teacher', true);
     }
 
+    public function test_student_list_and_alert_list_include_real_snapshot_deltas(): void
+    {
+        $principal = User::query()->create([
+            'name' => 'Principal User',
+            'email' => 'principal-list@example.test',
+            'role' => 'principal',
+            'password' => Hash::make('password'),
+        ]);
+
+        $student = Student::query()->create([
+            'student_code' => 'PPS-205',
+            'name' => 'Anika Sarker',
+            'class_name' => '10',
+            'section' => 'B',
+            'roll_number' => 4,
+            'guardian_name' => 'Dr. M. Sarker',
+            'guardian_phone' => '+8801712345678',
+        ]);
+
+        PerformanceSnapshot::query()->create([
+            'student_id' => $student->id,
+            'snapshot_period' => '2026-03',
+            'academic_score' => 71,
+            'attendance_score' => 82,
+            'behavior_score' => 74,
+            'participation_score' => 72,
+            'extracurricular_score' => 68,
+            'overall_score' => 78.4,
+            'risk_score' => 31,
+            'alert_level' => 'watch',
+            'trend_direction' => 'stable',
+            'snapshot_data' => [],
+            'calculated_at' => now(),
+        ]);
+
+        PerformanceSnapshot::query()->create([
+            'student_id' => $student->id,
+            'snapshot_period' => '2026-04',
+            'academic_score' => 58,
+            'attendance_score' => 72,
+            'behavior_score' => 69,
+            'participation_score' => 64,
+            'extracurricular_score' => 63,
+            'overall_score' => 68.2,
+            'risk_score' => 76,
+            'alert_level' => 'urgent',
+            'trend_direction' => 'rapid_down',
+            'snapshot_data' => [],
+            'calculated_at' => now(),
+        ]);
+
+        PpsAlert::query()->create([
+            'student_id' => $student->id,
+            'snapshot_period' => '2026-04',
+            'alert_level' => 'urgent',
+            'trigger_reasons' => [
+                ['type' => 'combined_drop', 'detail' => 'Academic and attendance indicators both fell.', 'value' => 2],
+            ],
+        ]);
+
+        $studentsResponse = $this->signInPps($principal)->getJson('/api/v1/pps/students?period=2026-04');
+
+        $studentsResponse
+            ->assertOk()
+            ->assertJsonPath('data.0.student.name', 'Anika Sarker')
+            ->assertJsonPath('data.0.trend_delta', -10.2);
+
+        $alertsResponse = $this->signInPps($principal)->getJson('/api/v1/pps/alerts');
+
+        $alertsResponse
+            ->assertOk()
+            ->assertJsonPath('data.0.student.guardian_name', 'Dr. M. Sarker')
+            ->assertJsonPath('data.0.snapshot.risk_score', 76)
+            ->assertJsonPath('data.0.snapshot.trend_delta', -10.2);
+    }
+
     public function test_teacher_cannot_access_principal_dashboard(): void
     {
         $teacher = User::query()->create([

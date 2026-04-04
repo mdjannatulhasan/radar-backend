@@ -23,6 +23,7 @@ use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Symfony\Component\HttpFoundation\Response;
 
 class StudentPerformanceController extends Controller
@@ -70,6 +71,17 @@ class StudentPerformanceController extends Controller
             })
             ->orderByDesc('risk_score')
             ->paginate($perPage);
+
+        $previousScores = $this->latestPreviousOverallScores(
+            $snapshots->getCollection()->pluck('student_id'),
+            $period,
+        );
+
+        $snapshots->setCollection(
+            $snapshots->getCollection()->map(
+                fn (PerformanceSnapshot $snapshot) => $this->serializeSnapshotWithTrend($snapshot, $previousScores)
+            )
+        );
 
         return response()->json($snapshots);
     }
@@ -136,7 +148,12 @@ class StudentPerformanceController extends Controller
                 'guardian_email',
             ]),
             'period' => $period,
-            'current_snapshot' => $snapshot,
+            'current_snapshot' => $snapshot
+                ? $this->serializeSnapshotWithTrend(
+                    $snapshot,
+                    $this->latestPreviousOverallScores(collect([$student->id]), $period),
+                )
+                : null,
             'academic_profile' => $this->insights->buildAcademicProfile($student, $period, $snapshot),
             'context' => $this->insights->buildContext($student, $request->user()),
             'wellbeing' => $this->insights->buildWellbeing($student, $request->user()),
@@ -328,6 +345,11 @@ class StudentPerformanceController extends Controller
                 'trend_direction',
             ]);
 
+        $rankingPreviousScores = $this->latestPreviousOverallScores(
+            $studentRanking->pluck('student_id'),
+            $period,
+        );
+
         return response()->json([
             'class_name' => $className,
             'section' => $section,
@@ -344,7 +366,9 @@ class StudentPerformanceController extends Controller
                 'class_avg' => round((float) $point->avg_score, 1),
                 'school_avg' => round((float) ($schoolTrend[$point->snapshot_period]->avg_score ?? 0), 1),
             ])->values(),
-            'student_ranking' => $studentRanking,
+            'student_ranking' => $studentRanking->map(
+                fn (PerformanceSnapshot $snapshot) => $this->serializeSnapshotWithTrend($snapshot, $rankingPreviousScores)
+            )->values(),
         ]);
     }
 
@@ -585,5 +609,35 @@ class StudentPerformanceController extends Controller
         }
 
         return array_values(array_unique($recommendations));
+    }
+
+    private function latestPreviousOverallScores(Collection $studentIds, string $period): Collection
+    {
+        $ids = $studentIds->filter()->unique()->values();
+
+        if ($ids->isEmpty()) {
+            return collect();
+        }
+
+        return PerformanceSnapshot::query()
+            ->whereIn('student_id', $ids)
+            ->where('snapshot_period', '<', $period)
+            ->orderBy('student_id')
+            ->orderByDesc('snapshot_period')
+            ->get(['student_id', 'overall_score', 'snapshot_period'])
+            ->groupBy('student_id')
+            ->map(fn (Collection $rows) => round((float) $rows->first()->overall_score, 1));
+    }
+
+    private function serializeSnapshotWithTrend(PerformanceSnapshot $snapshot, Collection $previousOverallScores): array
+    {
+        $payload = $snapshot->toArray();
+        $previousOverall = $previousOverallScores->get($snapshot->student_id);
+
+        $payload['trend_delta'] = $previousOverall === null
+            ? null
+            : round((float) $snapshot->overall_score - (float) $previousOverall, 1);
+
+        return $payload;
     }
 }
