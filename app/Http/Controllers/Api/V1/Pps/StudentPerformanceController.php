@@ -414,6 +414,7 @@ class StudentPerformanceController extends Controller
                     'teacher_name' => $row->teacher?->name ?? 'Unknown teacher',
                     'subject' => $row->subject,
                     'avg_score' => round((float) $row->avg_score, 1),
+                    'previous_avg' => $previousValue ? round((float) $previousValue->prev_avg, 1) : null,
                     'student_count' => (int) $row->student_count,
                     'assessment_count' => (int) $row->assessment_count,
                     'change' => $previousValue ? round((float) $row->avg_score - (float) $previousValue->prev_avg, 1) : null,

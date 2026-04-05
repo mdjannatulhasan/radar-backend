@@ -1,10 +1,14 @@
 <?php
 
-$frontendUrl = env('FRONTEND_URL');
+$frontendOrigins = array_filter(array_map(
+    static fn (string $origin): string => trim($origin),
+    explode(',', (string) env('FRONTEND_URLS', env('FRONTEND_URL', '')))
+));
+
 $appUrl = env('APP_URL');
 
 $allowedOrigins = array_values(array_filter([
-    $frontendUrl,
+    ...$frontendOrigins,
     $appUrl,
 ]));
 

@@ -333,6 +333,63 @@ class PhaseExpansionTest extends TestCase
             ->assertJsonPath('data.0.snapshot.trend_delta', -10.2);
     }
 
+    public function test_teacher_effectiveness_includes_previous_average_for_trend_rendering(): void
+    {
+        $principal = User::query()->create([
+            'name' => 'Principal Trends',
+            'email' => 'principal-trends@example.test',
+            'role' => 'principal',
+            'password' => Hash::make('password'),
+        ]);
+
+        $teacher = User::query()->create([
+            'name' => 'Mariam Rahman',
+            'email' => 'mariam@example.test',
+            'role' => 'teacher',
+            'password' => Hash::make('password'),
+        ]);
+
+        $student = Student::query()->create([
+            'student_code' => 'PPS-206',
+            'name' => 'Trend Student',
+            'class_name' => '9',
+            'section' => 'A',
+            'roll_number' => 6,
+        ]);
+
+        Assessment::query()->create([
+            'student_id' => $student->id,
+            'teacher_id' => $teacher->id,
+            'subject' => 'Mathematics',
+            'assessment_type' => 'class_test',
+            'term' => '2026-term-1',
+            'marks_obtained' => 68,
+            'total_marks' => 100,
+            'percentage' => 68,
+            'exam_date' => '2026-03-10',
+        ]);
+
+        Assessment::query()->create([
+            'student_id' => $student->id,
+            'teacher_id' => $teacher->id,
+            'subject' => 'Mathematics',
+            'assessment_type' => 'class_test',
+            'term' => '2026-term-1',
+            'marks_obtained' => 74,
+            'total_marks' => 100,
+            'percentage' => 74,
+            'exam_date' => '2026-04-10',
+        ]);
+
+        $this->signInPps($principal)
+            ->getJson('/api/v1/pps/teachers/effectiveness?period=2026-04')
+            ->assertOk()
+            ->assertJsonPath('data.0.teacher_name', 'Mariam Rahman')
+            ->assertJsonPath('data.0.previous_avg', 68)
+            ->assertJsonPath('data.0.avg_score', 74)
+            ->assertJsonPath('data.0.change', 6);
+    }
+
     public function test_teacher_cannot_access_principal_dashboard(): void
     {
         $teacher = User::query()->create([

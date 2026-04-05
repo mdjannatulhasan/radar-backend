@@ -54,6 +54,8 @@ return [
 
     'url' => env('APP_URL', 'http://localhost'),
 
+    'pps_require_https' => (bool) env('PPS_REQUIRE_HTTPS', ! in_array((string) env('APP_ENV', 'production'), ['local', 'testing'], true)),
+
     /*
     |--------------------------------------------------------------------------
     | Application Timezone

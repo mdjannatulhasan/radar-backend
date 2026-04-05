@@ -42,7 +42,7 @@ class PpsSecurityMiddleware
 
     private function mustRequireHttps(Request $request): bool
     {
-        if (app()->environment(['local', 'testing'])) {
+        if (! (bool) config('app.pps_require_https', ! app()->environment(['local', 'testing']))) {
             return false;
         }
 
