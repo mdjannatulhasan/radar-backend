@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\V1\Auth\AuthController;
 use App\Http\Controllers\Api\V1\Pps\AlertController;
+use App\Http\Controllers\Api\V1\Pps\AdministrationController;
 use App\Http\Controllers\Api\V1\Pps\AssessmentController;
 use App\Http\Controllers\Api\V1\Pps\AttendanceController;
 use App\Http\Controllers\Api\V1\Pps\BehaviorController;
@@ -89,6 +90,55 @@ Route::prefix('v1/pps')
         ->middleware('pps.permission:'.PpsPermissions::SETTINGS_VIEW);
     Route::patch('/settings', [SchoolPpsConfigController::class, 'update'])
         ->middleware('pps.permission:'.PpsPermissions::SETTINGS_UPDATE);
+
+    Route::get('/admin/overview', [AdministrationController::class, 'overview'])
+        ->middleware('pps.permission:'.PpsPermissions::ADMIN_PANEL_VIEW);
+    Route::post('/admin/departments', [AdministrationController::class, 'storeDepartment'])
+        ->middleware('pps.permission:'.PpsPermissions::MASTER_DATA_MANAGE);
+    Route::patch('/admin/departments/{department}', [AdministrationController::class, 'updateDepartment'])
+        ->middleware('pps.permission:'.PpsPermissions::MASTER_DATA_MANAGE);
+    Route::delete('/admin/departments/{department}', [AdministrationController::class, 'destroyDepartment'])
+        ->middleware('pps.permission:'.PpsPermissions::MASTER_DATA_MANAGE);
+
+    Route::post('/admin/class-sections', [AdministrationController::class, 'storeClassSection'])
+        ->middleware('pps.permission:'.PpsPermissions::MASTER_DATA_MANAGE);
+    Route::patch('/admin/class-sections/{classSection}', [AdministrationController::class, 'updateClassSection'])
+        ->middleware('pps.permission:'.PpsPermissions::MASTER_DATA_MANAGE);
+    Route::delete('/admin/class-sections/{classSection}', [AdministrationController::class, 'destroyClassSection'])
+        ->middleware('pps.permission:'.PpsPermissions::MASTER_DATA_MANAGE);
+
+    Route::post('/admin/subjects', [AdministrationController::class, 'storeSubject'])
+        ->middleware('pps.permission:'.PpsPermissions::MASTER_DATA_MANAGE);
+    Route::patch('/admin/subjects/{subject}', [AdministrationController::class, 'updateSubject'])
+        ->middleware('pps.permission:'.PpsPermissions::MASTER_DATA_MANAGE);
+    Route::delete('/admin/subjects/{subject}', [AdministrationController::class, 'destroySubject'])
+        ->middleware('pps.permission:'.PpsPermissions::MASTER_DATA_MANAGE);
+
+    Route::post('/admin/exams', [AdministrationController::class, 'storeExam'])
+        ->middleware('pps.permission:'.PpsPermissions::MASTER_DATA_MANAGE);
+    Route::patch('/admin/exams/{exam}', [AdministrationController::class, 'updateExam'])
+        ->middleware('pps.permission:'.PpsPermissions::MASTER_DATA_MANAGE);
+    Route::delete('/admin/exams/{exam}', [AdministrationController::class, 'destroyExam'])
+        ->middleware('pps.permission:'.PpsPermissions::MASTER_DATA_MANAGE);
+
+    Route::post('/admin/teacher-assignments', [AdministrationController::class, 'storeTeacherAssignment'])
+        ->middleware('pps.permission:'.PpsPermissions::TEACHER_ASSIGNMENTS_MANAGE);
+    Route::patch('/admin/teacher-assignments/{teacherAssignment}', [AdministrationController::class, 'updateTeacherAssignment'])
+        ->middleware('pps.permission:'.PpsPermissions::TEACHER_ASSIGNMENTS_MANAGE);
+    Route::delete('/admin/teacher-assignments/{teacherAssignment}', [AdministrationController::class, 'destroyTeacherAssignment'])
+        ->middleware('pps.permission:'.PpsPermissions::TEACHER_ASSIGNMENTS_MANAGE);
+
+    Route::post('/admin/students', [AdministrationController::class, 'storeStudent'])
+        ->middleware('pps.permission:'.PpsPermissions::STUDENTS_MANAGE);
+    Route::patch('/admin/students/{student}', [AdministrationController::class, 'updateStudent'])
+        ->middleware('pps.permission:'.PpsPermissions::STUDENTS_MANAGE);
+    Route::delete('/admin/students/{student}', [AdministrationController::class, 'destroyStudent'])
+        ->middleware('pps.permission:'.PpsPermissions::STUDENTS_MANAGE);
+
+    Route::post('/admin/bulk/students', [AdministrationController::class, 'bulkStudents'])
+        ->middleware('pps.permission:'.PpsPermissions::BULK_IMPORT_MANAGE);
+    Route::post('/admin/bulk/teacher-assignments', [AdministrationController::class, 'bulkTeacherAssignments'])
+        ->middleware('pps.permission:'.PpsPermissions::BULK_IMPORT_MANAGE);
 
     Route::get('/reports/custom', [StudentPerformanceController::class, 'customReport'])
         ->middleware('pps.permission:'.PpsPermissions::REPORTS_VIEW);

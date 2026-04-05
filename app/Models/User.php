@@ -23,6 +23,8 @@ class User extends Authenticatable
 
     public const ROLE_ADMIN = 'admin';
 
+    public const ROLE_SUPERADMIN = 'superadmin';
+
     public const ROLE_PRINCIPAL = 'principal';
 
     public const ROLE_TEACHER = 'teacher';

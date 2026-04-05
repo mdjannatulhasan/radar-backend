@@ -21,6 +21,11 @@ final class PpsPermissions
     public const EXTRACURRICULAR_MANAGE = 'pps.extracurricular.manage';
     public const SETTINGS_VIEW = 'pps.settings.view';
     public const SETTINGS_UPDATE = 'pps.settings.update';
+    public const ADMIN_PANEL_VIEW = 'pps.admin.panel.view';
+    public const MASTER_DATA_MANAGE = 'pps.master_data.manage';
+    public const STUDENTS_MANAGE = 'pps.students.manage';
+    public const TEACHER_ASSIGNMENTS_MANAGE = 'pps.teacher_assignments.manage';
+    public const BULK_IMPORT_MANAGE = 'pps.bulk_import.manage';
     public const REPORTS_VIEW = 'pps.reports.view';
     public const NOTIFICATIONS_VIEW = 'pps.notifications.view';
     public const NOTIFICATIONS_RUN = 'pps.notifications.run';
@@ -50,6 +55,11 @@ final class PpsPermissions
             self::EXTRACURRICULAR_MANAGE,
             self::SETTINGS_VIEW,
             self::SETTINGS_UPDATE,
+            self::ADMIN_PANEL_VIEW,
+            self::MASTER_DATA_MANAGE,
+            self::STUDENTS_MANAGE,
+            self::TEACHER_ASSIGNMENTS_MANAGE,
+            self::BULK_IMPORT_MANAGE,
             self::REPORTS_VIEW,
             self::NOTIFICATIONS_VIEW,
             self::NOTIFICATIONS_RUN,
@@ -64,7 +74,7 @@ final class PpsPermissions
     public static function forRole(?string $role): array
     {
         return match (strtolower(trim((string) $role))) {
-            'admin' => self::all(),
+            'superadmin', 'admin' => self::all(),
             'principal' => [
                 self::DASHBOARD_VIEW,
                 self::ALERTS_VIEW,
@@ -121,6 +131,7 @@ final class PpsPermissions
     public static function homePathForRole(?string $role): string
     {
         return match (strtolower(trim((string) $role))) {
+            'superadmin', 'admin' => '/pps/admin',
             'teacher' => '/pps/teacher',
             'guardian' => '/pps/parents',
             'counselor' => '/pps/students',
@@ -131,6 +142,7 @@ final class PpsPermissions
     public static function roleLabel(?string $role): string
     {
         return match (strtolower(trim((string) $role))) {
+            'superadmin' => 'Super Admin',
             'admin' => 'System Admin',
             'principal' => 'Principal',
             'teacher' => 'Teacher',

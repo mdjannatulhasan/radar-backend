@@ -87,14 +87,11 @@ class AssessmentController extends Controller
         $viewer = $request->user();
         $request->validate([
             'rows' => ['nullable', 'array', 'min:1'],
-            'rows.*.student_id' => ['required_with:rows', 'exists:students,id'],
-            'rows.*.subject' => ['required_with:rows', 'string', 'max:100'],
-            'rows.*.assessment_type' => ['required_with:rows', 'in:class_test,mid_term,final,assignment,quiz,practical'],
-            'rows.*.term' => ['required_with:rows', 'string', 'max:20'],
-            'rows.*.marks_obtained' => ['required_with:rows', 'numeric', 'min:0'],
-            'rows.*.total_marks' => ['required_with:rows', 'numeric', 'gt:0'],
-            'rows.*.exam_date' => ['nullable', 'date'],
             'file' => ['nullable', 'file'],
+            'subject' => ['nullable', 'string', 'max:100'],
+            'assessment_type' => ['nullable', 'in:class_test,mid_term,final,assignment,quiz,practical'],
+            'term' => ['nullable', 'string', 'max:20'],
+            'exam_date' => ['nullable', 'date'],
         ]);
 
         $rows = collect($request->input('rows', []));
@@ -110,30 +107,61 @@ class AssessmentController extends Controller
             }
         }
 
+        $errors = [];
         $inserted = collect();
-        foreach ($rows as $row) {
-            $student = Student::query()->findOrFail((int) $row['student_id']);
+        foreach ($rows->values() as $index => $row) {
+            $rowNum = $index + 2;
+            $student = $this->resolveStudentFromRow($row);
+
+            if (! $student) {
+                $errors[] = ['row' => $rowNum, 'message' => 'Each row needs a valid student_id or student_code.'];
+                continue;
+            }
+
+            $subject = trim((string) ($row['subject'] ?? $request->input('subject', '')));
+            $assessmentType = trim((string) ($row['assessment_type'] ?? $request->input('assessment_type', '')));
+            $term = trim((string) ($row['term'] ?? $request->input('term', '')));
+            $marksObtained = is_numeric($row['marks_obtained'] ?? null) ? (float) $row['marks_obtained'] : null;
+            $totalMarks = is_numeric($row['total_marks'] ?? null) ? (float) $row['total_marks'] : null;
+            $examDate = $row['exam_date'] ?? $request->input('exam_date');
+
+            if ($subject === '' || $assessmentType === '' || $term === '' || $marksObtained === null || $totalMarks === null) {
+                $errors[] = ['row' => $rowNum, 'message' => 'subject, assessment_type, term, marks_obtained, and total_marks are required.'];
+                continue;
+            }
+
+            if (! in_array($assessmentType, ['class_test', 'mid_term', 'final', 'assignment', 'quiz', 'practical'], true)) {
+                $errors[] = ['row' => $rowNum, 'message' => 'assessment_type is invalid.'];
+                continue;
+            }
+
+            if ($marksObtained < 0 || $totalMarks <= 0 || $marksObtained > $totalMarks) {
+                $errors[] = ['row' => $rowNum, 'message' => 'marks_obtained must be between 0 and total_marks.'];
+                continue;
+            }
 
             if ($viewer?->hasAnyRole('teacher')) {
                 if (! $viewer->canAccessStudent($student)) {
-                    abort(Response::HTTP_FORBIDDEN, 'You are not assigned to one or more selected students.');
+                    $errors[] = ['row' => $rowNum, 'message' => 'You are not assigned to this student or class.'];
+                    continue;
                 }
 
-                if (! in_array((string) $row['subject'], $viewer->assignedSubjectsForClass($student->class_name, $student->section), true)) {
-                    abort(Response::HTTP_FORBIDDEN, 'One or more assessment rows target an unassigned subject.');
+                if (! in_array($subject, $viewer->assignedSubjectsForClass($student->class_name, $student->section), true)) {
+                    $errors[] = ['row' => $rowNum, 'message' => 'The subject is outside your assigned teaching scope.'];
+                    continue;
                 }
             }
 
             $assessment = Assessment::query()->create([
-                'student_id' => (int) $row['student_id'],
+                'student_id' => $student->id,
                 'teacher_id' => $viewer?->hasAnyRole('teacher') ? $viewer->id : ($row['teacher_id'] ?? $viewer?->id),
-                'subject' => $row['subject'],
-                'assessment_type' => $row['assessment_type'],
-                'term' => $row['term'],
-                'marks_obtained' => (float) $row['marks_obtained'],
-                'total_marks' => (float) $row['total_marks'],
-                'percentage' => round(((float) $row['marks_obtained'] / (float) $row['total_marks']) * 100, 2),
-                'exam_date' => $row['exam_date'] ?? null,
+                'subject' => $subject,
+                'assessment_type' => $assessmentType,
+                'term' => $term,
+                'marks_obtained' => $marksObtained,
+                'total_marks' => $totalMarks,
+                'percentage' => round(($marksObtained / $totalMarks) * 100, 2),
+                'exam_date' => $examDate ?: null,
                 'remarks' => $row['remarks'] ?? null,
             ]);
 
@@ -149,7 +177,23 @@ class AssessmentController extends Controller
 
         return response()->json([
             'imported' => $inserted->count(),
+            'failed' => count($errors),
+            'errors' => $errors,
             'student_ids' => $inserted->pluck('student_id')->unique()->values(),
         ], 201);
+    }
+
+    private function resolveStudentFromRow(array $row): ?Student
+    {
+        $studentId = isset($row['student_id']) && is_numeric($row['student_id']) ? (int) $row['student_id'] : null;
+        $studentCode = trim((string) ($row['student_code'] ?? ''));
+
+        return Student::query()
+            ->when(
+                $studentId,
+                fn ($query) => $query->whereKey($studentId),
+                fn ($query) => $query->where('student_code', $studentCode)
+            )
+            ->first();
     }
 }
