@@ -25,7 +25,7 @@ class AssessmentController extends Controller
         $data = $request->validate([
             'student_id' => ['required', 'exists:students,id'],
             'subject' => ['required', 'string', 'max:100'],
-            'assessment_type' => ['required', 'in:class_test,mid_term,final,assignment,quiz,practical'],
+            'assessment_type' => ['required', 'in:class_test,assessment_test,quiz,spot_test,mid_term,final,assignment,practical'],
             'term' => ['required', 'string', 'max:20'],
             'marks_obtained' => ['required', 'numeric', 'min:0'],
             'total_marks' => ['required', 'numeric', 'gt:0'],
@@ -89,7 +89,7 @@ class AssessmentController extends Controller
             'rows' => ['nullable', 'array', 'min:1'],
             'file' => ['nullable', 'file'],
             'subject' => ['nullable', 'string', 'max:100'],
-            'assessment_type' => ['nullable', 'in:class_test,mid_term,final,assignment,quiz,practical'],
+            'assessment_type' => ['nullable', 'in:class_test,assessment_test,quiz,spot_test,mid_term,final,assignment,practical'],
             'term' => ['nullable', 'string', 'max:20'],
             'exam_date' => ['nullable', 'date'],
         ]);
@@ -130,7 +130,7 @@ class AssessmentController extends Controller
                 continue;
             }
 
-            if (! in_array($assessmentType, ['class_test', 'mid_term', 'final', 'assignment', 'quiz', 'practical'], true)) {
+            if (! in_array($assessmentType, ['class_test', 'assessment_test', 'quiz', 'spot_test', 'mid_term', 'final', 'assignment', 'practical'], true)) {
                 $errors[] = ['row' => $rowNum, 'message' => 'assessment_type is invalid.'];
                 continue;
             }

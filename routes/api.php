@@ -41,6 +41,8 @@ Route::prefix('v1/pps')
     Route::patch('/alerts/{alert}/resolve', [DashboardController::class, 'resolve'])
         ->middleware('pps.permission:'.PpsPermissions::ALERTS_RESOLVE);
 
+    Route::get('/students/search', [StudentPerformanceController::class, 'quickSearch'])
+        ->middleware('pps.permission:'.PpsPermissions::STUDENTS_VIEW);
     Route::get('/students', [StudentPerformanceController::class, 'index'])
         ->middleware('pps.permission:'.PpsPermissions::STUDENTS_VIEW);
     Route::get('/students/{student}', [StudentPerformanceController::class, 'show'])

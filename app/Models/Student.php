@@ -24,6 +24,9 @@ class Student extends Model
             'current_gpa' => 'float',
             'private_tuition_subjects' => 'array',
             'special_needs' => 'array',
+            'willingness_score' => 'integer',
+            'ability_score' => 'integer',
+            'economically_vulnerable' => 'boolean',
         ];
     }
 

@@ -92,6 +92,9 @@ final class PpsPermissions
                 self::NOTIFICATIONS_VIEW,
                 self::NOTIFICATIONS_RUN,
                 self::COUNSELING_MANAGE,
+                self::PSYCHOMETRIC_MANAGE,
+                self::PARENT_PORTAL_VIEW,
+                self::PARENT_REPORT_VIEW,
             ],
             'teacher' => [
                 self::ALERTS_VIEW,

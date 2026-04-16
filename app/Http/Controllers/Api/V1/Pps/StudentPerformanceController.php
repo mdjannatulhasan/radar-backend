@@ -66,7 +66,8 @@ class StudentPerformanceController extends Controller
                 $term = $request->string('search')->toString();
                 $query->whereHas('student', function (Builder $studentQuery) use ($term): void {
                     $studentQuery->where('name', 'like', "%{$term}%")
-                        ->orWhere('student_code', 'like', "%{$term}%");
+                        ->orWhere('student_code', 'like', "%{$term}%")
+                        ->orWhere('roll_number', 'like', "%{$term}%");
                 });
             })
             ->orderByDesc('risk_score')
@@ -169,6 +170,25 @@ class StudentPerformanceController extends Controller
         ]);
     }
 
+    public function quickSearch(Request $request): JsonResponse
+    {
+        $term = trim($request->string('q')->toString());
+        if ($term === '') {
+            return response()->json(['data' => []]);
+        }
+
+        $students = Student::query()
+            ->where(function (Builder $query) use ($term): void {
+                $query->where('name', 'like', "%{$term}%")
+                    ->orWhere('student_code', 'like', "%{$term}%")
+                    ->orWhere('roll_number', 'like', "%{$term}%");
+            })
+            ->limit(10)
+            ->get(['id', 'name', 'student_code', 'class_name', 'section', 'roll_number', 'photo_path']);
+
+        return response()->json(['data' => $students]);
+    }
+
     public function context(Request $request, Student $student): JsonResponse
     {
         $this->authorize('viewContext', $student);
@@ -206,6 +226,12 @@ class StudentPerformanceController extends Controller
             'residence_change_note' => ['nullable', 'string', 'max:255'],
             'special_needs' => ['nullable', 'array'],
             'confidential_context' => ['nullable', 'string', 'max:1500'],
+            'guardian_profession' => ['nullable', 'string', 'max:120'],
+            'guardian_profession_category' => ['nullable', 'in:business,doctor,lawyer,military,government,private_sector,education,agriculture,labor,other'],
+            'guardian_time_availability' => ['nullable', 'in:high,medium,low'],
+            'willingness_score' => ['nullable', 'integer', 'min:1', 'max:5'],
+            'ability_score' => ['nullable', 'integer', 'min:1', 'max:5'],
+            'economically_vulnerable' => ['nullable', 'boolean'],
         ]);
 
         if (! $fullAccess) {
@@ -217,7 +243,26 @@ class StudentPerformanceController extends Controller
                 'allergies',
                 'medications',
                 'residence_change_note',
+                'willingness_score',
             ])->all();
+        }
+
+        // Auto-compute quadrant when willingness/ability scores are present
+        $willingness = $validated['willingness_score'] ?? $student->willingness_score;
+        $ability = $validated['ability_score'] ?? $student->ability_score;
+        if ($willingness !== null && $ability !== null) {
+            $validated['student_quadrant'] = match (true) {
+                $willingness >= 3 && $ability >= 3 => 'willing_able',
+                $willingness < 3 && $ability >= 3  => 'unwilling_able',
+                $willingness >= 3 && $ability < 3  => 'willing_unable',
+                default                             => 'unwilling_unable',
+            };
+        }
+
+        // Auto-flag economically vulnerable when scholarship applied/approved
+        $scholarshipStatus = $validated['scholarship_status'] ?? null;
+        if (in_array($scholarshipStatus, ['applied', 'approved'], true)) {
+            $validated['economically_vulnerable'] = true;
         }
 
         $student->update($validated);

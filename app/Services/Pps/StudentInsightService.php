@@ -63,6 +63,14 @@ class StudentInsightService
             'residence_change_note' => $student->residence_change_note,
             'special_needs' => $student->special_needs ?? [],
             'confidential_context' => $student->confidential_context,
+            // Psychometric / guardian profile fields
+            'guardian_profession' => $student->guardian_profession,
+            'guardian_profession_category' => $student->guardian_profession_category,
+            'guardian_time_availability' => $student->guardian_time_availability,
+            'economically_vulnerable' => (bool) $student->economically_vulnerable,
+            'student_quadrant' => $student->student_quadrant,
+            'willingness_score' => $student->willingness_score,
+            'ability_score' => $student->ability_score,
         ];
     }
 
