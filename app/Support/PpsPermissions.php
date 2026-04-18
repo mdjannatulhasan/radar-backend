@@ -34,6 +34,11 @@ final class PpsPermissions
     public const PARENT_REPORT_PRINT = 'pps.parents.report.print';
     public const COUNSELING_MANAGE = 'pps.counseling.manage';
     public const PSYCHOMETRIC_MANAGE = 'pps.psychometric.manage';
+    public const WELFARE_VIEW = 'pps.welfare.view';
+    public const WELFARE_MANAGE = 'pps.welfare.manage';
+    public const NOTICES_VIEW = 'pps.notices.view';
+    public const NOTICES_MANAGE = 'pps.notices.manage';
+    public const USER_MANAGE = 'pps.users.manage';
 
     public static function all(): array
     {
@@ -68,13 +73,19 @@ final class PpsPermissions
             self::PARENT_REPORT_PRINT,
             self::COUNSELING_MANAGE,
             self::PSYCHOMETRIC_MANAGE,
+            self::WELFARE_VIEW,
+            self::WELFARE_MANAGE,
+            self::NOTICES_VIEW,
+            self::NOTICES_MANAGE,
+            self::USER_MANAGE,
         ];
     }
 
     public static function forRole(?string $role): array
     {
         return match (strtolower(trim((string) $role))) {
-            'superadmin', 'admin' => self::all(),
+            'superadmin' => self::all(),
+            'admin'      => array_filter(self::all(), fn ($p) => $p !== self::USER_MANAGE),
             'principal' => [
                 self::DASHBOARD_VIEW,
                 self::ALERTS_VIEW,
@@ -95,6 +106,8 @@ final class PpsPermissions
                 self::PSYCHOMETRIC_MANAGE,
                 self::PARENT_PORTAL_VIEW,
                 self::PARENT_REPORT_VIEW,
+                self::NOTICES_VIEW,
+                self::NOTICES_MANAGE,
             ],
             'teacher' => [
                 self::ALERTS_VIEW,
@@ -109,6 +122,7 @@ final class PpsPermissions
                 self::CLASSROOM_RATINGS_MANAGE,
                 self::EXTRACURRICULAR_MANAGE,
                 self::NOTIFICATIONS_VIEW,
+                self::NOTICES_VIEW,
             ],
             'guardian' => [
                 self::STUDENT_CONTEXT_VIEW,
@@ -117,6 +131,7 @@ final class PpsPermissions
                 self::PARENT_PORTAL_VIEW,
                 self::PARENT_REPORT_VIEW,
                 self::PARENT_REPORT_PRINT,
+                self::NOTICES_VIEW,
             ],
             'counselor' => [
                 self::STUDENTS_VIEW,
@@ -126,6 +141,16 @@ final class PpsPermissions
                 self::NOTIFICATIONS_VIEW,
                 self::COUNSELING_MANAGE,
                 self::PSYCHOMETRIC_MANAGE,
+                self::NOTICES_VIEW,
+            ],
+            'welfare_officer' => [
+                self::STUDENTS_VIEW,
+                self::STUDENT_CONTEXT_VIEW,
+                self::NOTIFICATIONS_VIEW,
+                self::WELFARE_VIEW,
+                self::WELFARE_MANAGE,
+                self::REPORTS_VIEW,
+                self::NOTICES_VIEW,
             ],
             default => [],
         };
@@ -138,6 +163,7 @@ final class PpsPermissions
             'teacher' => '/pps/teacher',
             'guardian' => '/pps/parents',
             'counselor' => '/pps/students',
+            'welfare_officer' => '/pps/welfare',
             default => '/pps',
         };
     }
@@ -151,6 +177,7 @@ final class PpsPermissions
             'teacher' => 'Teacher',
             'guardian' => 'Guardian',
             'counselor' => 'Counselor',
+            'welfare_officer' => 'Welfare Officer',
             default => 'User',
         };
     }

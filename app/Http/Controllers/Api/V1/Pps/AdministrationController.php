@@ -7,6 +7,8 @@ use App\Models\Pps\Assessment;
 use App\Models\Pps\ClassSection;
 use App\Models\Pps\Department;
 use App\Models\Pps\ExamDefinition;
+use App\Models\Pps\GradeConfig;
+use App\Models\Pps\Stream;
 use App\Models\Pps\Subject;
 use App\Models\Pps\TeacherAssignment;
 use App\Models\Student;
@@ -66,6 +68,11 @@ class AdministrationController extends Controller
                 ->orderBy('section')
                 ->orderBy('roll_number')
                 ->limit(300)
+                ->get(),
+            'streams' => Stream::query()->orderBy('name')->get(),
+            'grade_config' => GradeConfig::query()
+                ->whereNull('school_id')
+                ->orderBy('sort_order')
                 ->get(),
         ]);
     }
@@ -473,10 +480,79 @@ class AdministrationController extends Controller
             'class_name' => ['required', 'string', 'max:20'],
             'section' => ['required', 'string', 'max:10'],
             'roll_number' => ['nullable', 'integer', 'min:1', 'max:9999'],
+            'stream_id'     => ['nullable', 'exists:pps_streams,id'],
             'guardian_name' => ['nullable', 'string', 'max:255'],
             'guardian_phone' => ['nullable', 'string', 'max:50'],
             'guardian_email' => ['nullable', 'email'],
         ];
+    }
+
+    // ─── Stream CRUD ──────────────────────────────────────────────────────────
+
+    public function storeStream(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'name'      => ['required', 'string', 'max:60', 'unique:pps_streams,name'],
+            'code'      => ['nullable', 'string', 'max:20', 'unique:pps_streams,code'],
+            'is_active' => ['sometimes', 'boolean'],
+        ]);
+
+        return response()->json(['stream' => Stream::query()->create($data)], Response::HTTP_CREATED);
+    }
+
+    public function updateStream(Request $request, Stream $stream): JsonResponse
+    {
+        $data = $request->validate([
+            'name'      => ['sometimes', 'string', 'max:60', Rule::unique('pps_streams', 'name')->ignore($stream->id)],
+            'code'      => ['nullable', 'string', 'max:20', Rule::unique('pps_streams', 'code')->ignore($stream->id)],
+            'is_active' => ['sometimes', 'boolean'],
+        ]);
+
+        $stream->update($data);
+
+        return response()->json(['stream' => $stream->fresh()]);
+    }
+
+    public function destroyStream(Stream $stream): JsonResponse
+    {
+        $stream->delete();
+
+        return response()->json(null, Response::HTTP_NO_CONTENT);
+    }
+
+    // ─── Grade Config CRUD ────────────────────────────────────────────────────
+
+    public function updateGradeConfig(Request $request): JsonResponse
+    {
+        $rows = $request->validate([
+            'rows'                  => ['required', 'array', 'min:1'],
+            'rows.*.id'             => ['nullable', 'exists:pps_grade_config,id'],
+            'rows.*.min_pct'        => ['required', 'numeric', 'min:0', 'max:100'],
+            'rows.*.max_pct'        => ['required', 'numeric', 'min:0', 'max:100'],
+            'rows.*.letter_grade'   => ['required', 'string', 'max:5'],
+            'rows.*.grade_point'    => ['required', 'numeric', 'min:0', 'max:5'],
+            'rows.*.sort_order'     => ['nullable', 'integer'],
+        ]);
+
+        DB::transaction(function () use ($rows): void {
+            foreach ($rows['rows'] as $row) {
+                GradeConfig::query()->updateOrCreate(
+                    ['id' => $row['id'] ?? null],
+                    [
+                        'school_id'    => null,
+                        'min_pct'      => $row['min_pct'],
+                        'max_pct'      => $row['max_pct'],
+                        'letter_grade' => $row['letter_grade'],
+                        'grade_point'  => $row['grade_point'],
+                        'sort_order'   => $row['sort_order'] ?? 0,
+                    ]
+                );
+            }
+        });
+
+        return response()->json([
+            'grade_config' => GradeConfig::query()->whereNull('school_id')->orderBy('sort_order')->get(),
+        ]);
     }
 
     private function nullableString(mixed $value): ?string

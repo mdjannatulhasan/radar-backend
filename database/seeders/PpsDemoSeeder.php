@@ -49,6 +49,11 @@ class PpsDemoSeeder extends Seeder
             'password' => Hash::make(self::DEMO_PASSWORD),
         ]);
 
+        User::query()->firstOrCreate(['email' => 'welfare@pps.local'], [
+            'name' => 'Welfare Officer', 'role' => 'welfare_officer',
+            'password' => Hash::make(self::DEMO_PASSWORD),
+        ]);
+
         $teachers = collect([
             ['name' => 'Mariam Rahman',   'email' => 'teacher.math@pps.local'],
             ['name' => 'Sabbir Hasan',    'email' => 'teacher.english@pps.local'],

@@ -4,6 +4,9 @@ use App\Http\Controllers\Api\V1\Auth\AuthController;
 use App\Http\Controllers\Api\V1\Pps\AlertController;
 use App\Http\Controllers\Api\V1\Pps\AdministrationController;
 use App\Http\Controllers\Api\V1\Pps\AssessmentController;
+use App\Http\Controllers\Api\V1\Pps\TermMarksController;
+use App\Http\Controllers\Api\V1\Pps\PretestMarksController;
+use App\Http\Controllers\Api\V1\Pps\ResultSummaryController;
 use App\Http\Controllers\Api\V1\Pps\AttendanceController;
 use App\Http\Controllers\Api\V1\Pps\BehaviorController;
 use App\Http\Controllers\Api\V1\Pps\ClassroomRatingController;
@@ -123,6 +126,16 @@ Route::prefix('v1/pps')
     Route::delete('/admin/exams/{exam}', [AdministrationController::class, 'destroyExam'])
         ->middleware('pps.permission:'.PpsPermissions::MASTER_DATA_MANAGE);
 
+    Route::post('/admin/streams', [AdministrationController::class, 'storeStream'])
+        ->middleware('pps.permission:'.PpsPermissions::MASTER_DATA_MANAGE);
+    Route::patch('/admin/streams/{stream}', [AdministrationController::class, 'updateStream'])
+        ->middleware('pps.permission:'.PpsPermissions::MASTER_DATA_MANAGE);
+    Route::delete('/admin/streams/{stream}', [AdministrationController::class, 'destroyStream'])
+        ->middleware('pps.permission:'.PpsPermissions::MASTER_DATA_MANAGE);
+
+    Route::patch('/admin/grade-config', [AdministrationController::class, 'updateGradeConfig'])
+        ->middleware('pps.permission:'.PpsPermissions::MASTER_DATA_MANAGE);
+
     Route::post('/admin/teacher-assignments', [AdministrationController::class, 'storeTeacherAssignment'])
         ->middleware('pps.permission:'.PpsPermissions::TEACHER_ASSIGNMENTS_MANAGE);
     Route::patch('/admin/teacher-assignments/{teacherAssignment}', [AdministrationController::class, 'updateTeacherAssignment'])
@@ -146,6 +159,10 @@ Route::prefix('v1/pps')
         ->middleware('pps.permission:'.PpsPermissions::REPORTS_VIEW);
     Route::get('/reports/generate/{type}', [ReportController::class, 'generate'])
         ->middleware('pps.permission:'.PpsPermissions::REPORTS_VIEW);
+    Route::get('/reports/report-card', [ReportController::class, 'studentReportCard'])
+        ->middleware('pps.permission:'.PpsPermissions::REPORTS_VIEW);
+    Route::get('/reports/tabulation', [ReportController::class, 'tabulationSheet'])
+        ->middleware('pps.permission:'.PpsPermissions::REPORTS_VIEW);
     Route::get('/notifications', [NotificationController::class, 'index'])
         ->middleware('pps.permission:'.PpsPermissions::NOTIFICATIONS_VIEW);
     Route::post('/notifications/run/{type}', [NotificationController::class, 'run'])
@@ -158,6 +175,24 @@ Route::prefix('v1/pps')
     Route::get('/parents/my-children/{student}/report/print', [ParentViewController::class, 'printableReport'])
         ->middleware('pps.permission:'.PpsPermissions::PARENT_REPORT_PRINT)
         ->name('pps.parents.report.print');
+
+    // Marks entry — Format A (term-based, Classes 4–10)
+    Route::get('/marks/term', [TermMarksController::class, 'index'])
+        ->middleware('pps.permission:'.PpsPermissions::ASSESSMENTS_MANAGE);
+    Route::post('/marks/term', [TermMarksController::class, 'bulkStore'])
+        ->middleware('pps.permission:'.PpsPermissions::ASSESSMENTS_MANAGE);
+
+    // Marks entry — Format B (Pre-Test, Class 12)
+    Route::get('/marks/pretest', [PretestMarksController::class, 'index'])
+        ->middleware('pps.permission:'.PpsPermissions::ASSESSMENTS_MANAGE);
+    Route::post('/marks/pretest', [PretestMarksController::class, 'bulkStore'])
+        ->middleware('pps.permission:'.PpsPermissions::ASSESSMENTS_MANAGE);
+
+    // Result summary — GPA computation
+    Route::get('/results/summary', [ResultSummaryController::class, 'index'])
+        ->middleware('pps.permission:'.PpsPermissions::ASSESSMENTS_MANAGE);
+    Route::post('/results/compute', [ResultSummaryController::class, 'compute'])
+        ->middleware('pps.permission:'.PpsPermissions::ASSESSMENTS_MANAGE);
 
     Route::post('/counseling-sessions', [CounselingController::class, 'store'])
         ->middleware('pps.permission:'.PpsPermissions::COUNSELING_MANAGE);

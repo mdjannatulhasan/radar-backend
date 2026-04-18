@@ -15,5 +15,7 @@ class DatabaseSeeder extends Seeder
     public function run(): void
     {
         $this->call(PpsDemoSeeder::class);
+        $this->call(PpsGradeConfigSeeder::class);
+        $this->call(PpsExamSeeder::class);
     }
 }

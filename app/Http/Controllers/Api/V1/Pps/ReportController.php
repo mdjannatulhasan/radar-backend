@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Pps\PpsNotificationLog;
 use App\Models\Pps\PerformanceSnapshot;
 use App\Models\Student;
+use App\Services\Pps\ReportCardService;
 use App\Services\Pps\ReportExportService;
 use App\Services\Pps\SimplePdfService;
 use Illuminate\Http\Request;
@@ -15,7 +16,48 @@ class ReportController extends Controller
     public function __construct(
         private readonly ReportExportService $reports,
         private readonly SimplePdfService $pdf,
+        private readonly ReportCardService $reportCard,
     ) {
+    }
+
+    /**
+     * GET /v1/pps/reports/generate/report_card?student_id=&exam_id=
+     * Returns a PDF report card for one student.
+     */
+    public function studentReportCard(Request $request): \Symfony\Component\HttpFoundation\Response
+    {
+        $data = $request->validate([
+            'student_id' => ['required', 'exists:students,id'],
+            'exam_id'    => ['required', 'exists:pps_exam_definitions,id'],
+        ]);
+
+        $student = Student::query()->findOrFail($data['student_id']);
+        $pdf = $this->reportCard->generate($data['student_id'], $data['exam_id']);
+
+        $filename = 'report-card-' . str_replace(' ', '-', strtolower($student->name)) . '-' . $data['exam_id'] . '.pdf';
+
+        return response($pdf, 200, [
+            'Content-Type'        => 'application/pdf',
+            'Content-Disposition' => "attachment; filename=\"{$filename}\"",
+        ]);
+    }
+
+    /**
+     * GET /v1/pps/reports/generate/tabulation?exam_id=
+     * Returns a tabulation sheet PDF for all students in the exam's class+section.
+     */
+    public function tabulationSheet(Request $request): \Symfony\Component\HttpFoundation\Response
+    {
+        $data = $request->validate([
+            'exam_id' => ['required', 'exists:pps_exam_definitions,id'],
+        ]);
+
+        $pdf = $this->reportCard->generateTabulation($data['exam_id']);
+
+        return response($pdf, 200, [
+            'Content-Type'        => 'application/pdf',
+            'Content-Disposition' => "attachment; filename=\"tabulation-{$data['exam_id']}.pdf\"",
+        ]);
     }
 
     public function generate(Request $request, string $type)
