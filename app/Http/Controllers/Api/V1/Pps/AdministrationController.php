@@ -8,9 +8,12 @@ use App\Models\Pps\ClassSection;
 use App\Models\Pps\Department;
 use App\Models\Pps\ExamDefinition;
 use App\Models\Pps\GradeConfig;
+use App\Models\Pps\PretestMark;
+use App\Models\Pps\ResultSummary;
 use App\Models\Pps\Stream;
 use App\Models\Pps\Subject;
 use App\Models\Pps\TeacherAssignment;
+use App\Models\Pps\TermMark;
 use App\Models\Student;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
@@ -189,6 +192,21 @@ class AdministrationController extends Controller
     {
         $data = $request->validate($this->examRules());
 
+        // Warn on duplicate: same class+section+subject+term combination
+        $duplicate = ExamDefinition::query()
+            ->where('class_name', $data['class_name'] ?? null)
+            ->where('section', $data['section'] ?? null)
+            ->where('subject_id', $data['subject_id'] ?? null)
+            ->where('term', $data['term'] ?? null)
+            ->where('assessment_type', $data['assessment_type'])
+            ->exists();
+
+        if ($duplicate) {
+            return response()->json([
+                'message' => 'An exam with the same class, section, subject, term, and type already exists.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
         return response()->json([
             'exam' => ExamDefinition::query()->create($data)->load('department:id,name,code', 'subject:id,name,code'),
         ], Response::HTTP_CREATED);
@@ -206,6 +224,16 @@ class AdministrationController extends Controller
 
     public function destroyExam(ExamDefinition $exam): JsonResponse
     {
+        if (
+            TermMark::query()->where('exam_id', $exam->id)->exists()
+            || PretestMark::query()->where('exam_id', $exam->id)->exists()
+            || ResultSummary::query()->where('exam_id', $exam->id)->exists()
+        ) {
+            return response()->json([
+                'message' => 'This exam already has marks submitted. Delete all marks before removing the exam.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
         $exam->delete();
 
         return response()->json(['deleted' => true]);
@@ -279,6 +307,16 @@ class AdministrationController extends Controller
 
     public function destroyStudent(Student $student): JsonResponse
     {
+        if (
+            TermMark::query()->where('student_id', $student->id)->exists()
+            || PretestMark::query()->where('student_id', $student->id)->exists()
+            || ResultSummary::query()->where('student_id', $student->id)->exists()
+        ) {
+            return response()->json([
+                'message' => 'This student has submitted marks. Remove all marks before deleting the student.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
         $student->delete();
 
         return response()->json(['deleted' => true]);
@@ -515,6 +553,12 @@ class AdministrationController extends Controller
 
     public function destroyStream(Stream $stream): JsonResponse
     {
+        if (Student::query()->where('stream_id', $stream->id)->exists()) {
+            return response()->json([
+                'message' => 'This stream is assigned to students. Reassign students before deleting.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
         $stream->delete();
 
         return response()->json(null, Response::HTTP_NO_CONTENT);
@@ -547,6 +591,30 @@ class AdministrationController extends Controller
                         'sort_order'   => $row['sort_order'] ?? 0,
                     ]
                 );
+            }
+        });
+
+        return response()->json([
+            'grade_config' => GradeConfig::query()->whereNull('school_id')->orderBy('sort_order')->get(),
+        ]);
+    }
+
+    public function resetGradeConfig(): JsonResponse
+    {
+        $defaults = [
+            ['letter_grade' => 'A+', 'grade_point' => 5.00, 'min_pct' => 80, 'max_pct' => 100, 'sort_order' => 1],
+            ['letter_grade' => 'A',  'grade_point' => 4.00, 'min_pct' => 70, 'max_pct' => 79,  'sort_order' => 2],
+            ['letter_grade' => 'A-', 'grade_point' => 3.50, 'min_pct' => 60, 'max_pct' => 69,  'sort_order' => 3],
+            ['letter_grade' => 'B',  'grade_point' => 3.00, 'min_pct' => 50, 'max_pct' => 59,  'sort_order' => 4],
+            ['letter_grade' => 'C',  'grade_point' => 2.00, 'min_pct' => 40, 'max_pct' => 49,  'sort_order' => 5],
+            ['letter_grade' => 'D',  'grade_point' => 1.00, 'min_pct' => 33, 'max_pct' => 39,  'sort_order' => 6],
+            ['letter_grade' => 'F',  'grade_point' => 0.00, 'min_pct' => 0,  'max_pct' => 32,  'sort_order' => 7],
+        ];
+
+        DB::transaction(function () use ($defaults): void {
+            GradeConfig::query()->whereNull('school_id')->delete();
+            foreach ($defaults as $row) {
+                GradeConfig::query()->create(array_merge($row, ['school_id' => null]));
             }
         });
 

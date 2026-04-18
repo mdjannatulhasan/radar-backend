@@ -139,6 +139,9 @@ Route::prefix('v1/pps')
     Route::patch('/admin/grade-config', [AdministrationController::class, 'updateGradeConfig'])
         ->middleware('pps.permission:'.PpsPermissions::MASTER_DATA_MANAGE);
 
+    Route::post('/admin/grade-config/reset', [AdministrationController::class, 'resetGradeConfig'])
+        ->middleware('pps.permission:'.PpsPermissions::MASTER_DATA_MANAGE);
+
     Route::post('/admin/teacher-assignments', [AdministrationController::class, 'storeTeacherAssignment'])
         ->middleware('pps.permission:'.PpsPermissions::TEACHER_ASSIGNMENTS_MANAGE);
     Route::patch('/admin/teacher-assignments/{teacherAssignment}', [AdministrationController::class, 'updateTeacherAssignment'])
