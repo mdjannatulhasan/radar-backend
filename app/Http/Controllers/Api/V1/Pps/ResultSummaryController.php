@@ -26,14 +26,20 @@ class ResultSummaryController extends Controller
     public function index(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'exam_id' => ['required', 'exists:pps_exam_definitions,id'],
+            'exam_id'      => ['required', 'exists:pps_exam_definitions,id'],
+            'letter_grade' => ['nullable', 'string', 'max:3'],
         ]);
 
-        $summaries = ResultSummary::query()
+        $query = ResultSummary::query()
             ->where('exam_id', $data['exam_id'])
             ->with('student:id,name,roll_number,student_code,class_name,section')
-            ->orderBy('class_position')
-            ->get();
+            ->orderBy('class_position');
+
+        if (! empty($data['letter_grade'])) {
+            $query->where('letter_grade', strtoupper(trim($data['letter_grade'])));
+        }
+
+        $summaries = $query->get();
 
         return response()->json(['data' => $summaries]);
     }

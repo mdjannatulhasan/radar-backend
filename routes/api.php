@@ -13,11 +13,14 @@ use App\Http\Controllers\Api\V1\Pps\ClassroomRatingController;
 use App\Http\Controllers\Api\V1\Pps\CounselingController;
 use App\Http\Controllers\Api\V1\Pps\DashboardController;
 use App\Http\Controllers\Api\V1\Pps\ExtracurricularController;
+use App\Http\Controllers\Api\V1\Pps\NoticeController;
 use App\Http\Controllers\Api\V1\Pps\NotificationController;
 use App\Http\Controllers\Api\V1\Pps\ParentViewController;
 use App\Http\Controllers\Api\V1\Pps\ReportController;
 use App\Http\Controllers\Api\V1\Pps\SchoolPpsConfigController;
 use App\Http\Controllers\Api\V1\Pps\StudentPerformanceController;
+use App\Http\Controllers\Api\V1\Pps\UserManagementController;
+use App\Http\Controllers\Api\V1\Pps\WelfareController;
 use App\Support\PpsPermissions;
 use Illuminate\Support\Facades\Route;
 
@@ -196,6 +199,40 @@ Route::prefix('v1/pps')
 
     Route::post('/counseling-sessions', [CounselingController::class, 'store'])
         ->middleware('pps.permission:'.PpsPermissions::COUNSELING_MANAGE);
+    Route::patch('/counseling-sessions/{session}', [CounselingController::class, 'update'])
+        ->middleware('pps.permission:'.PpsPermissions::COUNSELING_MANAGE);
+    Route::get('/students/{student}/counseling', [CounselingController::class, 'studentSessions'])
+        ->middleware('pps.permission:'.PpsPermissions::STUDENT_COUNSELING_VIEW);
     Route::post('/psychometric', [CounselingController::class, 'storePsychometric'])
         ->middleware('pps.permission:'.PpsPermissions::PSYCHOMETRIC_MANAGE);
+
+    // Welfare interventions
+    Route::get('/welfare/students', [WelfareController::class, 'students'])
+        ->middleware('pps.permission:'.PpsPermissions::WELFARE_VIEW);
+    Route::get('/welfare/students/export', [WelfareController::class, 'export'])
+        ->middleware('pps.permission:'.PpsPermissions::WELFARE_VIEW);
+    Route::get('/welfare/students/{student}/interventions', [WelfareController::class, 'index'])
+        ->middleware('pps.permission:'.PpsPermissions::WELFARE_VIEW);
+    Route::post('/welfare/students/{student}/interventions', [WelfareController::class, 'store'])
+        ->middleware('pps.permission:'.PpsPermissions::WELFARE_MANAGE);
+
+    // Notice board
+    Route::get('/notices', [NoticeController::class, 'index'])
+        ->middleware('pps.permission:'.PpsPermissions::NOTICES_VIEW);
+    Route::post('/notices', [NoticeController::class, 'store'])
+        ->middleware('pps.permission:'.PpsPermissions::NOTICES_MANAGE);
+    Route::patch('/notices/{notice}', [NoticeController::class, 'update'])
+        ->middleware('pps.permission:'.PpsPermissions::NOTICES_MANAGE);
+    Route::delete('/notices/{notice}', [NoticeController::class, 'destroy'])
+        ->middleware('pps.permission:'.PpsPermissions::NOTICES_MANAGE);
+
+    // User management (superadmin only — USER_MANAGE permission)
+    Route::get('/admin/users', [UserManagementController::class, 'index'])
+        ->middleware('pps.permission:'.PpsPermissions::USER_MANAGE);
+    Route::post('/admin/users', [UserManagementController::class, 'store'])
+        ->middleware('pps.permission:'.PpsPermissions::USER_MANAGE);
+    Route::patch('/admin/users/{user}', [UserManagementController::class, 'update'])
+        ->middleware('pps.permission:'.PpsPermissions::USER_MANAGE);
+    Route::delete('/admin/users/{user}', [UserManagementController::class, 'destroy'])
+        ->middleware('pps.permission:'.PpsPermissions::USER_MANAGE);
 });

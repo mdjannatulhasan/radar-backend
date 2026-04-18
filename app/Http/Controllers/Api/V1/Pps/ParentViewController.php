@@ -4,7 +4,9 @@ namespace App\Http\Controllers\Api\V1\Pps;
 
 use App\Http\Controllers\Controller;
 use App\Models\Pps\Extracurricular;
+use App\Models\Pps\ExamDefinition;
 use App\Models\Pps\PerformanceSnapshot;
+use App\Models\Pps\ResultSummary;
 use App\Models\Student;
 use App\Services\Pps\RecommendationService;
 use App\Services\Pps\StudentInsightService;
@@ -57,6 +59,9 @@ class ParentViewController extends Controller
         $attendance = $snapshot->snapshot_data['attendance'] ?? ['total' => 0, 'absent' => 0];
         $present = max(0, (int) ($attendance['total'] ?? 0) - (int) ($attendance['absent'] ?? 0));
 
+        // PPS academic results — latest by default; guardian can pass ?exam_id= to select a term
+        $ppsResults = $this->buildPpsResults($student, $request->integer('exam_id') ?: null);
+
         return response()->json([
             'student' => $student->only(['id', 'name', 'class_name', 'section', 'photo_path']),
             'period' => $period,
@@ -79,7 +84,52 @@ class ParentViewController extends Controller
             'parent_advice' => $this->generateAdvice($snapshot),
             'overall_message' => $this->generateOverallMessage($snapshot),
             'report_link' => route('pps.parents.report.print', ['student' => $student->id, 'period' => $period]),
+            'pps_results' => $ppsResults,
         ]);
+    }
+
+    /**
+     * Build PPS academic results block for the guardian portal.
+     * Returns the selected exam's result + a list of available exams for the term selector.
+     */
+    private function buildPpsResults(Student $student, ?int $requestedExamId): array
+    {
+        // All exams that have a computed result for this student
+        $allResults = ResultSummary::query()
+            ->where('student_id', $student->id)
+            ->with('exam:id,title,assessment_type,class_name')
+            ->orderByDesc('computed_at')
+            ->get();
+
+        if ($allResults->isEmpty()) {
+            return ['available_exams' => [], 'selected' => null];
+        }
+
+        // Resolve which result to show
+        $selected = $requestedExamId
+            ? $allResults->firstWhere('exam_id', $requestedExamId)
+            : $allResults->first();
+
+        return [
+            'available_exams' => $allResults->map(fn ($r) => [
+                'exam_id'         => $r->exam_id,
+                'title'           => $r->exam?->title,
+                'assessment_type' => $r->exam?->assessment_type,
+                'computed_at'     => $r->computed_at?->toDateString(),
+            ])->all(),
+            'selected' => $selected ? [
+                'exam_id'               => $selected->exam_id,
+                'exam_title'            => $selected->exam?->title,
+                'gpa'                   => $selected->gpa,
+                'letter_grade'          => $selected->letter_grade,
+                'total_marks_obtained'  => $selected->total_marks_obtained,
+                'total_marks_full'      => $selected->total_marks_full,
+                'class_position'        => $selected->class_position,
+                'total_students'        => $selected->total_students_in_class,
+                'is_promoted'           => $selected->is_promoted,
+                'computed_at'           => $selected->computed_at?->toDateString(),
+            ] : null,
+        ];
     }
 
     public function printableReport(Request $request, Student $student)

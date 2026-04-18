@@ -44,6 +44,32 @@ class CounselingController extends Controller
         return response()->json($session->fresh(), 201);
     }
 
+    public function update(Request $request, CounselingSession $session): JsonResponse
+    {
+        $user = $request->user();
+        if (! $user?->hasAnyRole(['counselor', 'principal', 'admin'])) {
+            abort(Response::HTTP_FORBIDDEN, 'This PPS route requires counseling permissions.');
+        }
+
+        // Counselors may only update sessions they created
+        if ($user->hasAnyRole(['counselor']) && $session->counselor_id !== $user->id) {
+            abort(Response::HTTP_FORBIDDEN, 'You can only update your own counseling sessions.');
+        }
+
+        $data = $request->validate([
+            'session_date'       => ['sometimes', 'date'],
+            'session_type'       => ['sometimes', 'in:initial,follow_up,closing,psychometric'],
+            'session_notes'      => ['nullable', 'string', 'max:3000'],
+            'action_plan'        => ['nullable', 'string', 'max:1000'],
+            'next_session_date'  => ['nullable', 'date'],
+            'progress_status'    => ['nullable', 'in:improving,stable,deteriorating,resolved'],
+        ]);
+
+        $session->update($data);
+
+        return response()->json($session->fresh()->load('counselor:id,name'));
+    }
+
     public function studentSessions(Request $request, Student $student): JsonResponse
     {
         $this->authorize('viewCounseling', $student);
