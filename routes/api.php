@@ -4,6 +4,7 @@ use App\Http\Controllers\Api\V1\Auth\AuthController;
 use App\Http\Controllers\Api\V1\Pps\AlertController;
 use App\Http\Controllers\Api\V1\Pps\AdministrationController;
 use App\Http\Controllers\Api\V1\Pps\AssessmentController;
+use App\Http\Controllers\Api\V1\Pps\MarksMetaController;
 use App\Http\Controllers\Api\V1\Pps\TermMarksController;
 use App\Http\Controllers\Api\V1\Pps\PretestMarksController;
 use App\Http\Controllers\Api\V1\Pps\ResultSummaryController;
@@ -181,6 +182,10 @@ Route::prefix('v1/pps')
     Route::get('/parents/my-children/{student}/report/print', [ParentViewController::class, 'printableReport'])
         ->middleware('pps.permission:'.PpsPermissions::PARENT_REPORT_PRINT)
         ->name('pps.parents.report.print');
+
+    // Marks meta — exams + subjects scoped to the authenticated user's role/assignments
+    Route::get('/marks/meta', [MarksMetaController::class, 'index'])
+        ->middleware('pps.permission:'.PpsPermissions::ASSESSMENTS_MANAGE);
 
     // Marks entry — Format A (term-based, Classes 4–10)
     Route::get('/marks/term', [TermMarksController::class, 'index'])
