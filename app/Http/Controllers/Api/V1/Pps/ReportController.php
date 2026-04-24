@@ -36,9 +36,13 @@ class ReportController extends Controller
 
         $filename = 'report-card-' . str_replace(' ', '-', strtolower($student->name)) . '-' . $data['exam_id'] . '.pdf';
 
+        $inline = $request->boolean('inline', false);
+        $disposition = $inline ? "inline; filename=\"{$filename}\"" : "attachment; filename=\"{$filename}\"";
+
         return response($pdf, 200, [
             'Content-Type'        => 'application/pdf',
-            'Content-Disposition' => "attachment; filename=\"{$filename}\"",
+            'Content-Disposition' => $disposition,
+            'Cache-Control'       => 'private, no-store',
         ]);
     }
 
@@ -52,12 +56,22 @@ class ReportController extends Controller
             'exam_id' => ['required', 'exists:pps_exam_definitions,id'],
         ]);
 
+        $inline = $request->boolean('inline', false);
+        $filename = "tabulation-{$data['exam_id']}.pdf";
+        $disposition = $inline ? "inline; filename=\"{$filename}\"" : "attachment; filename=\"{$filename}\"";
+
+        // Generate outside the closure so exceptions surface before streaming starts
         $pdf = $this->reportCard->generateTabulation($data['exam_id']);
 
-        return response($pdf, 200, [
-            'Content-Type'        => 'application/pdf',
-            'Content-Disposition' => "attachment; filename=\"tabulation-{$data['exam_id']}.pdf\"",
-        ]);
+        return response()->streamDownload(
+            function () use ($pdf): void { echo $pdf; },
+            $filename,
+            [
+                'Content-Type'        => 'application/pdf',
+                'Content-Disposition' => $disposition,
+                'Cache-Control'       => 'private, no-store',
+            ],
+        );
     }
 
     public function generate(Request $request, string $type)

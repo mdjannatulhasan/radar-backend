@@ -8,14 +8,11 @@ use App\Models\Pps\ResultSummary;
 use App\Models\Pps\TermMark;
 use App\Models\Student;
 use Mpdf\Mpdf;
-use Mpdf\Config\ConfigVariables;
-use Mpdf\Config\FontVariables;
 
 class ReportCardService
 {
     /**
      * Generate a report card PDF for one student.
-     * Detects Format A (class ≤10) or Format B (class ≥11) automatically.
      *
      * @return string raw PDF bytes
      */
@@ -57,7 +54,7 @@ class ReportCardService
             ? $this->buildTabulationB($students, $exam)
             : $this->buildTabulationA($students, $exam);
 
-        return $this->renderPdf($html, 'L'); // Landscape for tabulation
+        return $this->renderPdf($html, 'L');
     }
 
     // ─── Format A — Classes 4–10 ─────────────────────────────────────────────
@@ -72,95 +69,136 @@ class ReportCardService
             ->get();
 
         $isSecondTerm = str_contains(strtolower($exam->term ?? ''), '2nd')
-            || str_contains(strtolower($exam->title ?? ''), '2nd');
+            || str_contains(strtolower($exam->title ?? ''), '2nd')
+            || str_contains(strtolower($exam->assessment_type ?? ''), 'annual');
 
+        // Build subject rows
         $subjectRows = '';
-        foreach ($marks as $m) {
-            $vtCols = $isSecondTerm
-                ? "<td>{$this->fmt($m->vt)}</td><td>{$this->fmt($m->vt_con)}</td>"
-                : '<td>—</td><td>—</td>';
+        foreach ($marks as $i => $m) {
+            $bg = ($i % 2 === 0) ? '#ffffff' : '#f5f7fb';
+            $subjectName = htmlspecialchars($m->subject->name ?? '');
+
+            if ($isSecondTerm) {
+                $vtRaw = $this->fmt($m->vt);
+                $vtCon = $this->fmt($m->vt_con);
+                $vtCells = "<td style='background:{$bg}'>{$vtRaw}</td><td style='background:{$bg}'>{$vtCon}</td>";
+            } else {
+                $vtCells = "<td style='background:{$bg}'>—</td><td style='background:{$bg}'>—</td>";
+            }
+
+            $gradeColor = $this->gradeColor($m->letter_grade);
 
             $subjectRows .= "
             <tr>
-                <td class='subject'>{$m->subject->name}</td>
-                <td>{$this->fmt($m->spot_test)}</td>
-                <td>{$this->fmt($m->spot_test_con)}</td>
-                <td>{$this->fmt($m->class_test2)}</td>
-                <td>{$this->fmt($m->class_test2_con)}</td>
-                <td>{$this->fmt($m->attendance)}</td>
-                <td>{$this->fmt($m->term_marks)}</td>
-                <td>{$this->fmt($m->term_con)}</td>
-                {$vtCols}
-                <td class='total'>{$this->fmt($m->total_obtained)}</td>
-                <td class='grade'>{$m->letter_grade}</td>
-                <td>{$this->fmt($m->highest_marks)}</td>
+                <td style='text-align:left;padding-left:6px;background:{$bg}'>{$subjectName}</td>
+                <td style='background:{$bg}'>{$this->fmt($m->spot_test)}</td>
+                <td style='background:{$bg}'>{$this->fmt($m->spot_test_con)}</td>
+                <td style='background:{$bg}'>{$this->fmt($m->class_test2)}</td>
+                <td style='background:{$bg}'>{$this->fmt($m->class_test2_con)}</td>
+                <td style='background:{$bg}'>{$this->fmt($m->attendance)}</td>
+                <td style='background:{$bg}'>{$this->fmt($m->term_marks)}</td>
+                <td style='background:{$bg}'>{$this->fmt($m->term_con)}</td>
+                {$vtCells}
+                <td style='font-weight:bold;background:{$bg}'>{$this->fmt($m->total_obtained)}</td>
+                <td style='font-weight:bold;color:{$gradeColor};background:{$bg}'>{$m->letter_grade}</td>
+                <td style='background:{$bg}'>{$this->fmt($m->highest_marks)}</td>
             </tr>";
         }
 
-        $vtHeader = $isSecondTerm
-            ? '<th>VT</th><th>VT CON</th>'
-            : '<th>VT</th><th>VT CON</th>';
+        $promotionText = $summary?->is_promoted === true ? 'Promoted' : ($summary?->is_promoted === false ? 'Not Promoted' : '—');
+        $promotionColor = $summary?->is_promoted === true ? '#166534' : ($summary?->is_promoted === false ? '#991b1b' : '#555');
+        $totalObtained  = $this->fmt($summary?->total_marks_obtained);
+        $totalFull      = $this->fmt($summary?->total_marks_full);
+        $gpa            = $this->fmt($summary?->gpa);
+        $letterGrade    = $summary?->letter_grade     ?? '—';
+        $classPos       = $summary?->class_position   ?? '—';
+        $totalStudents  = $summary?->total_students_in_class ?? '—';
+        $discipline     = $summary?->discipline       ?? '—';
+        $handwriting    = $summary?->handwriting      ?? '—';
+        $workingDays    = $summary?->total_working_days ?? '—';
+        $presence       = $summary?->total_presence   ?? '—';
+        $gpaColor       = $this->gpaColor((float)($summary?->gpa ?? 0));
+        $stream         = htmlspecialchars($student->stream?->name ?? '—');
+        $examYear       = $exam->exam_date?->format('Y') ?? date('Y');
+        $examTitle      = htmlspecialchars($exam->title ?? '');
 
-        $promotionText   = $summary?->is_promoted === true ? 'Promoted' : ($summary?->is_promoted === false ? 'Not Promoted' : '—');
-        $totalObtained   = $this->fmt($summary?->total_marks_obtained);
-        $totalFull       = $this->fmt($summary?->total_marks_full);
-        $gpa             = $this->fmt($summary?->gpa);
-        $letterGrade     = $summary?->letter_grade     ?? '—';
-        $classPos        = $summary?->class_position   ?? '—';
-        $totalStudents   = $summary?->total_students_in_class ?? '—';
-        $discipline      = $summary?->discipline       ?? '—';
-        $handwriting     = $summary?->handwriting      ?? '—';
-        $workingDays     = $summary?->total_working_days ?? '—';
-        $presence        = $summary?->total_presence   ?? '—';
+        $vtHeaderSpan = $isSecondTerm
+            ? '<th colspan="2" style="background:#1a3a5c">2nd Term Exam</th>'
+            : '<th colspan="2" style="background:#1a3a5c;opacity:0.6">2nd Term</th>';
 
         return $this->wrapHtml("
-            {$this->schoolHeader()}
-            {$this->studentInfoBar($student, $exam)}
+        " . $this->pageHeader($examYear, $examTitle) . "
+        " . $this->studentInfoTable($student, $exam, $stream) . "
 
-            <table class='marks-table'>
-                <thead>
-                    <tr>
-                        <th class='subject'>Subject</th>
-                        <th>Spot<br>Test</th><th>Spot<br>CON</th>
-                        <th>CT-2</th><th>CT-2<br>CON</th>
-                        <th>Att</th>
-                        <th>Term<br>Marks</th><th>Term<br>CON</th>
-                        {$vtHeader}
-                        <th>Total</th><th>Grade</th><th>Highest</th>
-                    </tr>
-                </thead>
-                <tbody>{$subjectRows}</tbody>
-            </table>
+        <table class='marks-table'>
+            <thead>
+                <tr>
+                    <th rowspan='2' class='subj-head'>Subjects</th>
+                    <th colspan='8' style='background:#1a3a5c'>First Term Exam</th>
+                    {$vtHeaderSpan}
+                    <th rowspan='2' class='total-head'>Total<br>Marks</th>
+                    <th rowspan='2' class='grade-head'>Grade</th>
+                    <th rowspan='2' class='high-head'>Highest<br>Marks</th>
+                </tr>
+                <tr>
+                    <th>Spot<br>Test</th>
+                    <th>ST<br>Con</th>
+                    <th>CT-2</th>
+                    <th>CT-2<br>Con</th>
+                    <th>Att</th>
+                    <th>Term<br>Marks</th>
+                    <th>Term<br>Con</th>
+                    <th>Grade</th>
+                    <th>VT</th>
+                    <th>VT<br>Con</th>
+                </tr>
+            </thead>
+            <tbody>{$subjectRows}</tbody>
+        </table>
 
-            <div class='summary-row'>
-                <div class='summary-block'>
-                    <span class='label'>Total Marks</span>
-                    <span class='value'>{$totalObtained} / {$totalFull}</span>
-                </div>
-                <div class='summary-block'>
-                    <span class='label'>GPA</span>
-                    <span class='value'>{$gpa}</span>
-                </div>
-                <div class='summary-block'>
-                    <span class='label'>Grade</span>
-                    <span class='value'>{$letterGrade}</span>
-                </div>
-                <div class='summary-block'>
-                    <span class='label'>Position</span>
-                    <span class='value'>{$classPos} / {$totalStudents}</span>
-                </div>
-            </div>
+        <table style='width:100%;border-collapse:collapse;margin-top:8px;font-size:8.5pt'>
+            <tr>
+                <td style='width:50%;vertical-align:top;padding-right:8px'>
+                    <table style='width:100%;border-collapse:collapse;border:1px solid #ccc'>
+                        <tr style='background:#e8edf5'>
+                            <td style='padding:4px 8px;border:1px solid #ccc;font-weight:bold'>Total Students in Class</td>
+                            <td style='padding:4px 8px;border:1px solid #ccc;text-align:center'>{$totalStudents}</td>
+                            <td style='padding:4px 8px;border:1px solid #ccc;font-weight:bold'>Working Days</td>
+                            <td style='padding:4px 8px;border:1px solid #ccc;text-align:center'>{$workingDays}</td>
+                        </tr>
+                        <tr>
+                            <td style='padding:4px 8px;border:1px solid #ccc;font-weight:bold'>Total Marks</td>
+                            <td style='padding:4px 8px;border:1px solid #ccc;text-align:center'>{$totalObtained} / {$totalFull}</td>
+                            <td style='padding:4px 8px;border:1px solid #ccc;font-weight:bold'>Total Presence</td>
+                            <td style='padding:4px 8px;border:1px solid #ccc;text-align:center'>{$presence}</td>
+                        </tr>
+                        <tr style='background:#e8edf5'>
+                            <td style='padding:4px 8px;border:1px solid #ccc;font-weight:bold'>Discipline</td>
+                            <td style='padding:4px 8px;border:1px solid #ccc;text-align:center'>{$discipline}</td>
+                            <td style='padding:4px 8px;border:1px solid #ccc;font-weight:bold'>Hand Writing</td>
+                            <td style='padding:4px 8px;border:1px solid #ccc;text-align:center'>{$handwriting}</td>
+                        </tr>
+                        <tr>
+                            <td style='padding:4px 8px;border:1px solid #ccc;font-weight:bold'>GPA</td>
+                            <td style='padding:4px 8px;border:1px solid #ccc;text-align:center;font-weight:bold;color:{$gpaColor}'>{$gpa}</td>
+                            <td style='padding:4px 8px;border:1px solid #ccc;font-weight:bold'>Grade</td>
+                            <td style='padding:4px 8px;border:1px solid #ccc;text-align:center;font-weight:bold'>{$letterGrade}</td>
+                        </tr>
+                        <tr style='background:#e8edf5'>
+                            <td style='padding:4px 8px;border:1px solid #ccc;font-weight:bold'>Position</td>
+                            <td style='padding:4px 8px;border:1px solid #ccc;text-align:center'>{$classPos} / {$totalStudents}</td>
+                            <td style='padding:6px 8px;border:1px solid #ccc;font-weight:bold;font-size:9pt'>Result</td>
+                            <td style='padding:6px 8px;border:1px solid #ccc;text-align:center;font-weight:bold;color:{$promotionColor};font-size:9pt'>{$promotionText}</td>
+                        </tr>
+                    </table>
+                </td>
+                <td style='width:50%;vertical-align:top'>
+                    " . $this->gradeTable() . "
+                </td>
+            </tr>
+        </table>
 
-            <div class='bottom-row'>
-                <div><span class='label'>Discipline:</span> {$discipline}</div>
-                <div><span class='label'>Handwriting:</span> {$handwriting}</div>
-                <div><span class='label'>Working Days:</span> {$workingDays}</div>
-                <div><span class='label'>Presence:</span> {$presence}</div>
-                <div><span class='label'>Result:</span> <strong>{$promotionText}</strong></div>
-            </div>
-
-            {$this->gradeTable()}
-            {$this->signatureBlock()}
+        " . $this->signatureBlock() . "
         ");
     }
 
@@ -176,69 +214,96 @@ class ReportCardService
             ->get();
 
         $subjectRows = '';
-        foreach ($marks as $m) {
-            $promoGrade = $m->promotion_grade ?? '—';
+        foreach ($marks as $i => $m) {
+            $bg = ($i % 2 === 0) ? '#ffffff' : '#f5f7fb';
+            $subjectName = htmlspecialchars($m->subject->name ?? '');
+            $promoGrade  = $m->promotion_grade ?? '—';
+            $gradeColor  = $this->gradeColor($m->letter_grade);
+
             $subjectRows .= "
             <tr>
-                <td class='subject'>{$m->subject->name}</td>
-                <td>{$this->fmt($m->ct)}</td>
-                <td>{$this->fmt($m->attendance)}</td>
-                <td>{$this->fmt($m->cq)}</td>
-                <td>{$this->fmt($m->cq_con)}</td>
-                <td>{$this->fmt($m->mcq)}</td>
-                <td>{$this->fmt($m->mcq_con)}</td>
-                <td class='total'>{$this->fmt($m->total_obtained)}</td>
-                <td class='grade'>{$m->letter_grade}</td>
-                <td>{$this->fmt($m->grade_point)}</td>
-                <td>{$this->fmt($m->highest_marks)}</td>
-                <td>{$promoGrade}</td>
+                <td style='text-align:left;padding-left:6px;background:{$bg}'>{$subjectName}</td>
+                <td style='background:{$bg}'>{$this->fmt($m->ct)}</td>
+                <td style='background:{$bg}'>{$this->fmt($m->attendance)}</td>
+                <td style='background:{$bg}'>{$this->fmt($m->cq)}</td>
+                <td style='background:{$bg}'>{$this->fmt($m->cq_con)}</td>
+                <td style='background:{$bg}'>{$this->fmt($m->mcq)}</td>
+                <td style='background:{$bg}'>{$this->fmt($m->mcq_con)}</td>
+                <td style='font-weight:bold;background:{$bg}'>{$this->fmt($m->total_obtained)}</td>
+                <td style='font-weight:bold;color:{$gradeColor};background:{$bg}'>{$m->letter_grade}</td>
+                <td style='background:{$bg}'>{$this->fmt($m->grade_point)}</td>
+                <td style='background:{$bg}'>{$this->fmt($m->highest_marks)}</td>
+                <td style='background:{$bg}'>{$promoGrade}</td>
             </tr>";
         }
 
-        $bTotalObtained = $this->fmt($summary?->total_marks_obtained);
-        $bGpa           = $this->fmt($summary?->gpa);
-        $bGrade         = $summary?->letter_grade ?? '—';
-        $bTotalStudents = $summary?->total_students_in_class ?? '—';
+        $bTotal    = $this->fmt($summary?->total_marks_obtained);
+        $bGpa      = $this->fmt($summary?->gpa);
+        $bGrade    = $summary?->letter_grade ?? '—';
+        $bStudents = $summary?->total_students_in_class ?? '—';
+        $bPos      = $summary?->class_position ?? '—';
+        $promotionText  = $summary?->is_promoted === true ? 'Promoted' : ($summary?->is_promoted === false ? 'Not Promoted' : '—');
+        $promotionColor = $summary?->is_promoted === true ? '#166534' : ($summary?->is_promoted === false ? '#991b1b' : '#555');
+        $gpaColor       = $this->gpaColor((float)($summary?->gpa ?? 0));
+        $stream         = htmlspecialchars($student->stream?->name ?? '—');
+        $examYear       = $exam->exam_date?->format('Y') ?? date('Y');
+        $examTitle      = htmlspecialchars($exam->title ?? '');
 
         return $this->wrapHtml("
-            {$this->schoolHeader()}
-            {$this->studentInfoBar($student, $exam)}
+        " . $this->pageHeader($examYear, $examTitle) . "
+        " . $this->studentInfoTable($student, $exam, $stream) . "
 
-            <table class='marks-table'>
-                <thead>
-                    <tr>
-                        <th class='subject'>Subject</th>
-                        <th>CT</th><th>Att</th>
-                        <th>CQ</th><th>CQ CON</th>
-                        <th>MCQ</th><th>MCQ CON</th>
-                        <th>Total</th><th>Grade</th><th>GP</th>
-                        <th>Highest</th><th>Promotion<br>Grade</th>
-                    </tr>
-                </thead>
-                <tbody>{$subjectRows}</tbody>
-            </table>
+        <table class='marks-table'>
+            <thead>
+                <tr>
+                    <th class='subj-head'>Subject</th>
+                    <th>CT</th>
+                    <th>Att</th>
+                    <th>CQ</th>
+                    <th>CQ<br>Con</th>
+                    <th>MCQ</th>
+                    <th>MCQ<br>Con</th>
+                    <th class='total-head'>Total</th>
+                    <th class='grade-head'>Grade</th>
+                    <th>GP</th>
+                    <th class='high-head'>Highest</th>
+                    <th>Promotion<br>Grade</th>
+                </tr>
+            </thead>
+            <tbody>{$subjectRows}</tbody>
+        </table>
 
-            <div class='summary-row'>
-                <div class='summary-block'>
-                    <span class='label'>Total</span>
-                    <span class='value'>{$bTotalObtained}</span>
-                </div>
-                <div class='summary-block'>
-                    <span class='label'>GPA</span>
-                    <span class='value'>{$bGpa}</span>
-                </div>
-                <div class='summary-block'>
-                    <span class='label'>Grade</span>
-                    <span class='value'>{$bGrade}</span>
-                </div>
-                <div class='summary-block'>
-                    <span class='label'>Total Students</span>
-                    <span class='value'>{$bTotalStudents}</span>
-                </div>
-            </div>
+        <table style='width:100%;border-collapse:collapse;margin-top:8px;font-size:8.5pt'>
+            <tr>
+                <td style='width:50%;vertical-align:top;padding-right:8px'>
+                    <table style='width:100%;border-collapse:collapse;border:1px solid #ccc'>
+                        <tr style='background:#e8edf5'>
+                            <td style='padding:4px 8px;border:1px solid #ccc;font-weight:bold'>Total Students</td>
+                            <td style='padding:4px 8px;border:1px solid #ccc;text-align:center'>{$bStudents}</td>
+                            <td style='padding:4px 8px;border:1px solid #ccc;font-weight:bold'>Total Marks</td>
+                            <td style='padding:4px 8px;border:1px solid #ccc;text-align:center'>{$bTotal}</td>
+                        </tr>
+                        <tr>
+                            <td style='padding:4px 8px;border:1px solid #ccc;font-weight:bold'>GPA</td>
+                            <td style='padding:4px 8px;border:1px solid #ccc;text-align:center;font-weight:bold;color:{$gpaColor}'>{$bGpa}</td>
+                            <td style='padding:4px 8px;border:1px solid #ccc;font-weight:bold'>Grade</td>
+                            <td style='padding:4px 8px;border:1px solid #ccc;text-align:center;font-weight:bold'>{$bGrade}</td>
+                        </tr>
+                        <tr style='background:#e8edf5'>
+                            <td style='padding:4px 8px;border:1px solid #ccc;font-weight:bold'>Position</td>
+                            <td style='padding:4px 8px;border:1px solid #ccc;text-align:center'>{$bPos} / {$bStudents}</td>
+                            <td style='padding:6px 8px;border:1px solid #ccc;font-weight:bold'>Result</td>
+                            <td style='padding:6px 8px;border:1px solid #ccc;text-align:center;font-weight:bold;color:{$promotionColor}'>{$promotionText}</td>
+                        </tr>
+                    </table>
+                </td>
+                <td style='width:50%;vertical-align:top'>
+                    " . $this->gradeTable() . "
+                </td>
+            </tr>
+        </table>
 
-            {$this->gradeTable()}
-            {$this->signatureBlock()}
+        " . $this->signatureBlock() . "
         ");
     }
 
@@ -260,42 +325,53 @@ class ReportCardService
             ->sortBy('subject_id')
             ->values();
 
-        $subjectHeaders = $subjects->map(fn ($m) => "<th>{$m->subject->name}</th>")->implode('');
+        $subjectHeaders = $subjects->map(fn ($m) => "<th>" . htmlspecialchars($m->subject->name ?? '') . "</th>")->implode('');
+
         $rows = '';
-        foreach ($students as $student) {
+        foreach ($students as $i => $student) {
+            $bg = ($i % 2 === 0) ? '#ffffff' : '#f5f7fb';
             $studentMarks = ($allMarks[$student->id] ?? collect())->keyBy('subject_id');
-            $cells = $subjects->map(fn ($m) => '<td>' . $this->fmt($studentMarks->get($m->subject_id)?->total_obtained) . '</td>')->implode('');
-            $summary = ResultSummary::query()->where('exam_id', $exam->id)->where('student_id', $student->id)->first();
-            $tTotal    = $this->fmt($summary?->total_marks_obtained);
-            $tGpa      = $this->fmt($summary?->gpa);
-            $tGrade    = $summary?->letter_grade  ?? '—';
-            $tPos      = $summary?->class_position ?? '—';
+            $cells = $subjects->map(function ($m) use ($studentMarks, $bg) {
+                $val = $this->fmt($studentMarks->get($m->subject_id)?->total_obtained);
+                return "<td style='background:{$bg}'>{$val}</td>";
+            })->implode('');
+            $summary  = ResultSummary::query()->where('exam_id', $exam->id)->where('student_id', $student->id)->first();
+            $tTotal   = $this->fmt($summary?->total_marks_obtained);
+            $tGpa     = $this->fmt($summary?->gpa);
+            $tGrade   = $summary?->letter_grade  ?? '—';
+            $tPos     = $summary?->class_position ?? '—';
+            $gColor   = $this->gradeColor($tGrade);
+
             $rows .= "<tr>
-                <td>{$student->roll_number}</td>
-                <td class='name'>{$student->name}</td>
+                <td style='background:{$bg};text-align:center'>{$student->roll_number}</td>
+                <td style='background:{$bg};text-align:left;padding-left:4px'>" . htmlspecialchars($student->name) . "</td>
                 {$cells}
-                <td><strong>{$tTotal}</strong></td>
-                <td>{$tGpa}</td>
-                <td>{$tGrade}</td>
-                <td>{$tPos}</td>
+                <td style='font-weight:bold;background:{$bg}'>{$tTotal}</td>
+                <td style='background:{$bg}'>{$tGpa}</td>
+                <td style='font-weight:bold;color:{$gColor};background:{$bg}'>{$tGrade}</td>
+                <td style='background:{$bg}'>{$tPos}</td>
             </tr>";
         }
 
+        $year = $exam->exam_date?->format('Y') ?? date('Y');
+
         return $this->wrapHtml("
-            {$this->schoolHeader()}
-            <h2 style='text-align:center;font-size:13pt;margin:6px 0'>
-                Tabulation Sheet — Class {$exam->class_name} {$exam->section} — {$exam->title}
-            </h2>
-            <table class='marks-table tabulation'>
-                <thead>
-                    <tr>
-                        <th>Roll</th><th class='name'>Name</th>
-                        {$subjectHeaders}
-                        <th>Total</th><th>GPA</th><th>Grade</th><th>Pos</th>
-                    </tr>
-                </thead>
-                <tbody>{$rows}</tbody>
-            </table>
+        <div style='text-align:center;border-bottom:2px solid #1a3a5c;padding-bottom:6px;margin-bottom:8px'>
+            <div style='font-size:15pt;font-weight:bold;color:#1a3a5c'>Cantonment Public School &amp; College, Saidpur</div>
+            <div style='font-size:11pt;font-weight:bold;margin-top:2px'>Tabulation Sheet — {$year}</div>
+            <div style='font-size:9pt;color:#444;margin-top:2px'>Class {$exam->class_name} — Section {$exam->section} — " . htmlspecialchars($exam->title) . "</div>
+        </div>
+        <table class='marks-table tabulation'>
+            <thead>
+                <tr>
+                    <th style='width:30px'>Roll</th>
+                    <th style='text-align:left;min-width:100px'>Name</th>
+                    {$subjectHeaders}
+                    <th>Total</th><th>GPA</th><th>Grade</th><th>Pos</th>
+                </tr>
+            </thead>
+            <tbody>{$rows}</tbody>
+        </table>
         ");
     }
 
@@ -315,67 +391,101 @@ class ReportCardService
             ->sortBy('subject_id')
             ->values();
 
-        $subjectHeaders = $subjects->map(fn ($m) => "<th>{$m->subject->name}</th>")->implode('');
+        $subjectHeaders = $subjects->map(fn ($m) => "<th>" . htmlspecialchars($m->subject->name ?? '') . "</th>")->implode('');
+
         $rows = '';
-        foreach ($students as $student) {
+        foreach ($students as $i => $student) {
+            $bg = ($i % 2 === 0) ? '#ffffff' : '#f5f7fb';
             $studentMarks = ($allMarks[$student->id] ?? collect())->keyBy('subject_id');
-            $cells = $subjects->map(fn ($m) => '<td>' . $this->fmt($studentMarks->get($m->subject_id)?->total_obtained) . '</td>')->implode('');
-            $summary = ResultSummary::query()->where('exam_id', $exam->id)->where('student_id', $student->id)->first();
-            $bTabTotal = $this->fmt($summary?->total_marks_obtained);
-            $bTabGpa   = $this->fmt($summary?->gpa);
-            $bTabGrade = $summary?->letter_grade ?? '—';
+            $cells = $subjects->map(function ($m) use ($studentMarks, $bg) {
+                $val = $this->fmt($studentMarks->get($m->subject_id)?->total_obtained);
+                return "<td style='background:{$bg}'>{$val}</td>";
+            })->implode('');
+            $summary  = ResultSummary::query()->where('exam_id', $exam->id)->where('student_id', $student->id)->first();
+            $bTotal   = $this->fmt($summary?->total_marks_obtained);
+            $bGpa     = $this->fmt($summary?->gpa);
+            $bGrade   = $summary?->letter_grade ?? '—';
+            $gColor   = $this->gradeColor($bGrade);
+
             $rows .= "<tr>
-                <td>{$student->roll_number}</td>
-                <td class='name'>{$student->name}</td>
+                <td style='background:{$bg};text-align:center'>{$student->roll_number}</td>
+                <td style='background:{$bg};text-align:left;padding-left:4px'>" . htmlspecialchars($student->name) . "</td>
                 {$cells}
-                <td><strong>{$bTabTotal}</strong></td>
-                <td>{$bTabGpa}</td>
-                <td>{$bTabGrade}</td>
+                <td style='font-weight:bold;background:{$bg}'>{$bTotal}</td>
+                <td style='background:{$bg}'>{$bGpa}</td>
+                <td style='font-weight:bold;color:{$gColor};background:{$bg}'>{$bGrade}</td>
             </tr>";
         }
 
+        $year = $exam->exam_date?->format('Y') ?? date('Y');
+
         return $this->wrapHtml("
-            {$this->schoolHeader()}
-            <h2 style='text-align:center;font-size:13pt;margin:6px 0'>
-                Tabulation Sheet — Class {$exam->class_name} {$exam->section} — {$exam->title}
-            </h2>
-            <table class='marks-table tabulation'>
-                <thead>
-                    <tr>
-                        <th>Roll</th><th class='name'>Name</th>
-                        {$subjectHeaders}
-                        <th>Total</th><th>GPA</th><th>Grade</th>
-                    </tr>
-                </thead>
-                <tbody>{$rows}</tbody>
-            </table>
+        <div style='text-align:center;border-bottom:2px solid #1a3a5c;padding-bottom:6px;margin-bottom:8px'>
+            <div style='font-size:15pt;font-weight:bold;color:#1a3a5c'>Cantonment Public School &amp; College, Saidpur</div>
+            <div style='font-size:11pt;font-weight:bold;margin-top:2px'>Tabulation Sheet — {$year}</div>
+            <div style='font-size:9pt;color:#444;margin-top:2px'>Class {$exam->class_name} — Section {$exam->section} — " . htmlspecialchars($exam->title) . "</div>
+        </div>
+        <table class='marks-table tabulation'>
+            <thead>
+                <tr>
+                    <th style='width:30px'>Roll</th>
+                    <th style='text-align:left;min-width:100px'>Name</th>
+                    {$subjectHeaders}
+                    <th>Total</th><th>GPA</th><th>Grade</th>
+                </tr>
+            </thead>
+            <tbody>{$rows}</tbody>
+        </table>
         ");
     }
 
-    // ─── Shared HTML helpers ──────────────────────────────────────────────────
+    // ─── Page layout helpers ──────────────────────────────────────────────────
 
-    private function schoolHeader(): string
+    private function pageHeader(string $year, string $examTitle): string
     {
+        $logoSvg = $this->schoolLogoSvg();
+
         return "
-        <div class='school-header'>
-            <h1>Cantonment Public School &amp; College, Saidpur</h1>
-            <p class='sub'>Student Report Card</p>
-        </div>";
+        <table style='width:100%;border-bottom:2px solid #1a3a5c;margin-bottom:8px;padding-bottom:6px'>
+            <tr>
+                <td style='width:60px;text-align:center;vertical-align:middle'>{$logoSvg}</td>
+                <td style='text-align:center;vertical-align:middle'>
+                    <div style='font-size:14pt;font-weight:bold;color:#1a3a5c'>Cantonment Public School &amp; College, Saidpur</div>
+                    <div style='font-size:10pt;font-weight:bold;margin-top:3px'>Students Progress Report — {$year}</div>
+                    <div style='font-size:8pt;color:#555;margin-top:2px'>{$examTitle}</div>
+                </td>
+                <td style='width:60px;text-align:center;vertical-align:middle'>{$logoSvg}</td>
+            </tr>
+        </table>";
     }
 
-    private function studentInfoBar(Student $student, ExamDefinition $exam): string
+    private function studentInfoTable(Student $student, ExamDefinition $exam, string $stream): string
     {
-        $stream = $student->stream?->name ?? '—';
+        $name    = htmlspecialchars($student->name ?? '');
+        $code    = htmlspecialchars($student->student_code ?? '');
+        $roll    = $student->roll_number ?? '—';
+        $class   = $student->class_name ?? '—';
+        $section = $student->section ?? '—';
+        $gender  = ucfirst($student->gender ?? '—');
+
         return "
-        <table class='info-bar'>
+        <table style='width:100%;border-collapse:collapse;margin-bottom:8px;font-size:8.5pt;border:1px solid #ccc'>
+            <tr style='background:#e8edf5'>
+                <td style='padding:5px 8px;border:1px solid #ccc;font-weight:bold;width:80px'>Name</td>
+                <td style='padding:5px 8px;border:1px solid #ccc;font-weight:bold'>{$name}</td>
+                <td style='padding:5px 8px;border:1px solid #ccc;font-weight:bold;width:80px'>Student ID</td>
+                <td style='padding:5px 8px;border:1px solid #ccc'>{$code}</td>
+                <td style='padding:5px 8px;border:1px solid #ccc;font-weight:bold;width:70px'>Class Roll</td>
+                <td style='padding:5px 8px;border:1px solid #ccc'>{$roll}</td>
+                <td rowspan='2' style='width:55px;text-align:center;border:1px solid #ccc;vertical-align:middle;color:#aaa;font-size:7pt'>Photo</td>
+            </tr>
             <tr>
-                <td><b>Name:</b> {$student->name}</td>
-                <td><b>ID:</b> {$student->student_code}</td>
-                <td><b>Roll:</b> {$student->roll_number}</td>
-                <td><b>Class:</b> {$student->class_name}</td>
-                <td><b>Section:</b> {$student->section}</td>
-                <td><b>Stream:</b> {$stream}</td>
-                <td><b>Exam:</b> {$exam->title}</td>
+                <td style='padding:5px 8px;border:1px solid #ccc;font-weight:bold'>Class</td>
+                <td style='padding:5px 8px;border:1px solid #ccc'>{$class}</td>
+                <td style='padding:5px 8px;border:1px solid #ccc;font-weight:bold'>Section</td>
+                <td style='padding:5px 8px;border:1px solid #ccc'>{$section}</td>
+                <td style='padding:5px 8px;border:1px solid #ccc;font-weight:bold'>Gender</td>
+                <td style='padding:5px 8px;border:1px solid #ccc'>{$gender}</td>
             </tr>
         </table>";
     }
@@ -383,28 +493,80 @@ class ReportCardService
     private function gradeTable(): string
     {
         return "
-        <div class='grade-ref'>
-            <table>
-                <tr><th>Marks %</th><th>Grade</th><th>GP</th></tr>
-                <tr><td>80–100</td><td>A+</td><td>5.00</td></tr>
-                <tr><td>70–79</td><td>A</td><td>4.00</td></tr>
-                <tr><td>60–69</td><td>A-</td><td>3.50</td></tr>
-                <tr><td>50–59</td><td>B</td><td>3.00</td></tr>
-                <tr><td>40–49</td><td>C</td><td>2.00</td></tr>
-                <tr><td>33–39</td><td>D</td><td>1.00</td></tr>
-                <tr><td>0–32</td><td>F</td><td>0.00</td></tr>
-            </table>
-        </div>";
+        <table style='width:100%;border-collapse:collapse;font-size:8pt'>
+            <thead>
+                <tr>
+                    <th colspan='3' style='background:#1a3a5c;color:#fff;padding:4px;text-align:center'>Grading By Merit</th>
+                </tr>
+                <tr style='background:#e8edf5'>
+                    <th style='padding:3px 6px;border:1px solid #ccc;text-align:center'>Marks %</th>
+                    <th style='padding:3px 6px;border:1px solid #ccc;text-align:center'>Grade</th>
+                    <th style='padding:3px 6px;border:1px solid #ccc;text-align:center'>Grade Point</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td style='padding:3px 6px;border:1px solid #ccc;text-align:center'>80–100</td><td style='padding:3px 6px;border:1px solid #ccc;text-align:center;font-weight:bold;color:#166534'>A+</td><td style='padding:3px 6px;border:1px solid #ccc;text-align:center'>5.00</td></tr>
+                <tr style='background:#f9f9f9'><td style='padding:3px 6px;border:1px solid #ccc;text-align:center'>70–79</td><td style='padding:3px 6px;border:1px solid #ccc;text-align:center;font-weight:bold;color:#166534'>A</td><td style='padding:3px 6px;border:1px solid #ccc;text-align:center'>4.00</td></tr>
+                <tr><td style='padding:3px 6px;border:1px solid #ccc;text-align:center'>60–69</td><td style='padding:3px 6px;border:1px solid #ccc;text-align:center;font-weight:bold;color:#1d4ed8'>A-</td><td style='padding:3px 6px;border:1px solid #ccc;text-align:center'>3.50</td></tr>
+                <tr style='background:#f9f9f9'><td style='padding:3px 6px;border:1px solid #ccc;text-align:center'>50–59</td><td style='padding:3px 6px;border:1px solid #ccc;text-align:center;font-weight:bold;color:#1d4ed8'>B</td><td style='padding:3px 6px;border:1px solid #ccc;text-align:center'>3.00</td></tr>
+                <tr><td style='padding:3px 6px;border:1px solid #ccc;text-align:center'>40–49</td><td style='padding:3px 6px;border:1px solid #ccc;text-align:center;font-weight:bold;color:#d97706'>C</td><td style='padding:3px 6px;border:1px solid #ccc;text-align:center'>2.00</td></tr>
+                <tr style='background:#f9f9f9'><td style='padding:3px 6px;border:1px solid #ccc;text-align:center'>33–39</td><td style='padding:3px 6px;border:1px solid #ccc;text-align:center;font-weight:bold;color:#d97706'>D</td><td style='padding:3px 6px;border:1px solid #ccc;text-align:center'>1.00</td></tr>
+                <tr><td style='padding:3px 6px;border:1px solid #ccc;text-align:center'>0–32</td><td style='padding:3px 6px;border:1px solid #ccc;text-align:center;font-weight:bold;color:#dc2626'>F</td><td style='padding:3px 6px;border:1px solid #ccc;text-align:center'>0.00</td></tr>
+            </tbody>
+        </table>";
     }
 
     private function signatureBlock(): string
     {
         return "
-        <div class='signatures'>
-            <div class='sig'>Class Teacher</div>
-            <div class='sig'>Principal</div>
-            <div class='sig'>Guardian</div>
+        <table style='width:100%;margin-top:30px;font-size:8pt'>
+            <tr>
+                <td style='width:33%;text-align:center;padding-top:4px'>
+                    <div style='border-top:1px solid #333;padding-top:4px;margin:0 20px'>Class Teacher's Comment &amp; Signature</div>
+                </td>
+                <td style='width:33%;text-align:center;padding-top:4px'>
+                    <div style='border-top:1px solid #333;padding-top:4px;margin:0 20px'>Principal's Signature</div>
+                </td>
+                <td style='width:33%;text-align:center;padding-top:4px'>
+                    <div style='border-top:1px solid #333;padding-top:4px;margin:0 20px'>Guardian's Signature</div>
+                </td>
+            </tr>
+        </table>
+        <div style='text-align:center;margin-top:10px;font-size:7pt;color:#888'>
+            Login: cpcs.artscolege.com
         </div>";
+    }
+
+    private function schoolLogoSvg(): string
+    {
+        return '<svg width="52" height="52" viewBox="0 0 52 52" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="26" cy="26" r="25" fill="#1a3a5c" stroke="#c9a227" stroke-width="2"/>
+            <circle cx="26" cy="26" r="20" fill="none" stroke="#c9a227" stroke-width="1"/>
+            <text x="26" y="21" font-family="Arial" font-size="7" font-weight="bold" fill="#ffffff" text-anchor="middle">CPSC</text>
+            <text x="26" y="31" font-family="Arial" font-size="5" fill="#c9a227" text-anchor="middle">SAIDPUR</text>
+            <text x="26" y="39" font-family="Arial" font-size="4.5" fill="#aaa" text-anchor="middle">EST. 1971</text>
+        </svg>';
+    }
+
+    // ─── Utility helpers ──────────────────────────────────────────────────────
+
+    private function gradeColor(?string $grade): string
+    {
+        return match ($grade) {
+            'A+', 'A' => '#166534',
+            'A-', 'B' => '#1d4ed8',
+            'C', 'D'  => '#d97706',
+            'F'       => '#dc2626',
+            default   => '#111111',
+        };
+    }
+
+    private function gpaColor(float $gpa): string
+    {
+        if ($gpa >= 4.5) return '#166534';
+        if ($gpa >= 3.5) return '#1d4ed8';
+        if ($gpa >= 2.5) return '#d97706';
+        return '#dc2626';
     }
 
     private function fmt(?float $value): string
@@ -412,57 +574,51 @@ class ReportCardService
         if ($value === null) {
             return '—';
         }
-        // Show as integer if whole number, else 2 decimal places
         return $value == (int) $value ? (string) (int) $value : number_format($value, 2);
     }
 
     private function wrapHtml(string $body): string
     {
         return "<!DOCTYPE html><html><head><meta charset='UTF-8'><style>
-            body { font-family: Arial, sans-serif; font-size: 9pt; color: #111; }
-            .school-header { text-align: center; border-bottom: 2px solid #333; padding-bottom: 6px; margin-bottom: 8px; }
-            .school-header h1 { font-size: 14pt; margin: 0 0 2px; }
-            .school-header .sub { font-size: 9pt; margin: 0; }
-            .info-bar { width: 100%; border-collapse: collapse; margin-bottom: 10px; font-size: 8.5pt; }
-            .info-bar td { padding: 3px 6px; border: 1px solid #ccc; }
-            .marks-table { width: 100%; border-collapse: collapse; margin-bottom: 10px; font-size: 8pt; }
-            .marks-table th { background: #2c3e6b; color: #fff; padding: 4px 3px; text-align: center; border: 1px solid #fff; font-size: 7.5pt; }
-            .marks-table td { padding: 3px 3px; text-align: center; border: 1px solid #ccc; }
-            .marks-table td.subject { text-align: left; padding-left: 5px; }
-            .marks-table td.total { font-weight: bold; }
-            .marks-table td.grade { font-weight: bold; color: #2c3e6b; }
-            .marks-table tr:nth-child(even) { background: #f7f7f7; }
-            .tabulation th, .tabulation td { font-size: 7pt; padding: 2px; }
-            .tabulation td.name { text-align: left; }
-            .summary-row { display: flex; gap: 16px; margin: 10px 0; }
-            .summary-block { background: #f0f4ff; border: 1px solid #ccd; padding: 6px 12px; border-radius: 4px; }
-            .summary-block .label { font-size: 7.5pt; color: #666; display: block; }
-            .summary-block .value { font-size: 12pt; font-weight: bold; color: #2c3e6b; }
-            .bottom-row { display: flex; gap: 20px; font-size: 8.5pt; margin: 8px 0; padding: 6px; background: #f9f9f9; border: 1px solid #ddd; }
-            .bottom-row .label { color: #555; }
-            .grade-ref { float: right; margin-top: -60px; }
-            .grade-ref table { border-collapse: collapse; font-size: 7.5pt; }
-            .grade-ref td, .grade-ref th { border: 1px solid #ccc; padding: 2px 5px; text-align: center; }
-            .grade-ref th { background: #2c3e6b; color: #fff; }
-            .signatures { display: flex; gap: 40px; margin-top: 40px; }
-            .sig { width: 160px; border-top: 1px solid #333; text-align: center; font-size: 8pt; padding-top: 4px; }
+            body { font-family: Arial, sans-serif; font-size: 9pt; color: #111; margin: 0; padding: 0; }
+            .marks-table { width: 100%; border-collapse: collapse; margin-bottom: 8px; font-size: 8pt; }
+            .marks-table th {
+                background: #1a3a5c;
+                color: #fff;
+                padding: 4px 3px;
+                text-align: center;
+                border: 1px solid #2c4e7c;
+                font-size: 7.5pt;
+                line-height: 1.2;
+            }
+            .marks-table td {
+                padding: 3px 3px;
+                text-align: center;
+                border: 1px solid #d0d5e0;
+                font-size: 8pt;
+            }
+            .subj-head  { text-align: left !important; padding-left: 6px !important; min-width: 90px; }
+            .total-head { background: #2c3e6b !important; }
+            .grade-head { background: #2c3e6b !important; }
+            .high-head  { background: #374151 !important; }
+            .tabulation th, .tabulation td { font-size: 7pt; padding: 2px 3px; }
         </style></head><body>{$body}</body></html>";
     }
 
     private function renderPdf(string $html, string $orientation = 'P'): string
     {
         $mpdf = new Mpdf([
-            'orientation'  => $orientation,
-            'margin_top'   => 10,
-            'margin_right' => 8,
-            'margin_bottom'=> 10,
-            'margin_left'  => 8,
+            'orientation'       => $orientation,
+            'margin_top'        => 8,
+            'margin_right'      => 8,
+            'margin_bottom'     => 8,
+            'margin_left'       => 8,
             'default_font_size' => 9,
             'default_font'      => 'Arial',
         ]);
 
         $mpdf->WriteHTML($html);
 
-        return $mpdf->Output('', 'S'); // Return as string
+        return $mpdf->Output('', 'S');
     }
 }
