@@ -14,7 +14,8 @@ final class PpsPermissions
     public const STUDENT_COUNSELING_VIEW = 'pps.students.counseling.view';
     public const CLASS_ANALYTICS_VIEW = 'pps.classes.analytics.view';
     public const TEACHER_EFFECTIVENESS_VIEW = 'pps.teachers.effectiveness.view';
-    public const ASSESSMENTS_MANAGE = 'pps.assessments.manage';
+    public const ASSESSMENTS_VIEW   = 'pps.assessments.view';   // read-only: results, report cards, marks grid
+    public const ASSESSMENTS_MANAGE = 'pps.assessments.manage'; // read+write: enter/save marks, compute GPA
     public const ATTENDANCE_MANAGE = 'pps.attendance.manage';
     public const BEHAVIOR_MANAGE = 'pps.behavior.manage';
     public const CLASSROOM_RATINGS_MANAGE = 'pps.classroom_ratings.manage';
@@ -53,6 +54,7 @@ final class PpsPermissions
             self::STUDENT_COUNSELING_VIEW,
             self::CLASS_ANALYTICS_VIEW,
             self::TEACHER_EFFECTIVENESS_VIEW,
+            self::ASSESSMENTS_VIEW,
             self::ASSESSMENTS_MANAGE,
             self::ATTENDANCE_MANAGE,
             self::BEHAVIOR_MANAGE,
@@ -97,6 +99,7 @@ final class PpsPermissions
                 self::STUDENT_COUNSELING_VIEW,
                 self::CLASS_ANALYTICS_VIEW,
                 self::TEACHER_EFFECTIVENESS_VIEW,
+                self::ASSESSMENTS_VIEW,   // read-only: view marks, results, report cards
                 self::SETTINGS_VIEW,
                 self::SETTINGS_UPDATE,
                 self::REPORTS_VIEW,
@@ -159,12 +162,12 @@ final class PpsPermissions
     public static function homePathForRole(?string $role): string
     {
         return match (strtolower(trim((string) $role))) {
-            'superadmin', 'admin' => '/pps/admin',
-            'teacher' => '/pps/teacher',
-            'guardian' => '/pps/parents',
-            'counselor' => '/pps/students',
-            'welfare_officer' => '/pps/welfare',
-            default => '/pps',
+            'superadmin', 'admin' => '/admin',
+            'teacher' => '/teacher',
+            'guardian' => '/parents',
+            'counselor' => '/students',
+            'welfare_officer' => '/welfare',
+            default => '/',
         };
     }
 

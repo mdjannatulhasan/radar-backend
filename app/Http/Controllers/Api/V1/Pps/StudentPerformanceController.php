@@ -615,7 +615,15 @@ class StudentPerformanceController extends Controller
 
     private function resolvePeriod(Request $request): string
     {
-        return $request->string('period')->toString() ?: now()->format('Y-m');
+        $requested = $request->string('period')->toString() ?: now()->format('Y-m');
+
+        $exists = PerformanceSnapshot::where('snapshot_period', $requested)->exists();
+        if ($exists) {
+            return $requested;
+        }
+
+        $latest = PerformanceSnapshot::max('snapshot_period');
+        return $latest ?? $requested;
     }
 
     private function applyTeacherStudentScope(Builder $query, User $teacher): void

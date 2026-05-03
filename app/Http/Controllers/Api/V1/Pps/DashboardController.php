@@ -19,7 +19,10 @@ class DashboardController extends Controller
 
     public function summary(Request $request): JsonResponse
     {
-        $period = $request->string('period')->toString() ?: now()->format('Y-m');
+        $requested = $request->string('period')->toString() ?: now()->format('Y-m');
+        $period = PerformanceSnapshot::where('snapshot_period', $requested)->exists()
+            ? $requested
+            : (PerformanceSnapshot::max('snapshot_period') ?? $requested);
 
         $summary = PerformanceSnapshot::query()
             ->forPeriod($period)

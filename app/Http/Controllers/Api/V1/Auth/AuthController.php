@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Auth;
 use App\Http\Controllers\Controller;
 use App\Models\Pps\TeacherAssignment;
 use App\Models\User;
+use App\Support\ModuleCapabilities;
 use App\Support\PpsPermissions;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -105,6 +106,7 @@ class AuthController extends Controller
             'permissions' => $user->permissions(),
             'home_path' => PpsPermissions::homePathForRole($user->role),
             'teacher_scope' => $teacherScope,
+            'capabilities' => ModuleCapabilities::forRole($user->role),
         ];
     }
 

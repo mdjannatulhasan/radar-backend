@@ -24,7 +24,9 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'pps.role' => \App\Http\Middleware\PpsRoleMiddleware::class,
             'pps.permission' => \App\Http\Middleware\PpsPermissionMiddleware::class,
+            'pps.permission_any' => \App\Http\Middleware\PpsPermissionAnyMiddleware::class,
             'pps.security' => \App\Http\Middleware\PpsSecurityMiddleware::class,
+            'pps.can' => \App\Http\Middleware\PpsCapabilityMiddleware::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
