@@ -3,7 +3,7 @@
 namespace App\Models\Pps;
 
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class ExamDefinition extends Model
 {
@@ -15,18 +15,13 @@ class ExamDefinition extends Model
     {
         return [
             'total_marks' => 'float',
-            'exam_date' => 'date',
-            'is_active' => 'boolean',
+            'exam_date'   => 'date',
+            'is_active'   => 'boolean',
         ];
     }
 
-    public function department(): BelongsTo
+    public function scopes(): HasMany
     {
-        return $this->belongsTo(Department::class, 'department_id');
-    }
-
-    public function subject(): BelongsTo
-    {
-        return $this->belongsTo(Subject::class, 'subject_id');
+        return $this->hasMany(ExamScope::class, 'exam_id');
     }
 }

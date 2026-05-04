@@ -117,6 +117,20 @@ Route::prefix('v1/pps')
     Route::delete('/admin/class-sections/{classSection}', [AdministrationController::class, 'destroyClassSection'])
         ->middleware('pps.can:admin_panel.manage');
 
+    Route::post('/admin/sections', [AdministrationController::class, 'storeSection'])
+        ->middleware('pps.can:admin_panel.manage');
+    Route::patch('/admin/sections/{section}', [AdministrationController::class, 'updateSection'])
+        ->middleware('pps.can:admin_panel.manage');
+    Route::delete('/admin/sections/{section}', [AdministrationController::class, 'destroySection'])
+        ->middleware('pps.can:admin_panel.manage');
+
+    Route::post('/admin/classes', [AdministrationController::class, 'storeClass'])
+        ->middleware('pps.can:admin_panel.manage');
+    Route::patch('/admin/classes/{schoolClass}', [AdministrationController::class, 'updateClass'])
+        ->middleware('pps.can:admin_panel.manage');
+    Route::delete('/admin/classes/{schoolClass}', [AdministrationController::class, 'destroyClass'])
+        ->middleware('pps.can:admin_panel.manage');
+
     Route::post('/admin/subjects', [AdministrationController::class, 'storeSubject'])
         ->middleware('pps.can:admin_panel.manage');
     Route::patch('/admin/subjects/{subject}', [AdministrationController::class, 'updateSubject'])
@@ -129,6 +143,17 @@ Route::prefix('v1/pps')
     Route::patch('/admin/exams/{exam}', [AdministrationController::class, 'updateExam'])
         ->middleware('pps.can:admin_panel.manage');
     Route::delete('/admin/exams/{exam}', [AdministrationController::class, 'destroyExam'])
+        ->middleware('pps.can:admin_panel.manage');
+    Route::post('/admin/exams/{exam}/scopes', [AdministrationController::class, 'storeExamScope'])
+        ->middleware('pps.can:admin_panel.manage');
+    Route::delete('/admin/exams/{exam}/scopes/{scope}', [AdministrationController::class, 'destroyExamScope'])
+        ->middleware('pps.can:admin_panel.manage');
+
+    Route::post('/admin/teachers', [AdministrationController::class, 'storeTeacher'])
+        ->middleware('pps.can:admin_panel.manage');
+    Route::patch('/admin/teachers/{teacher}', [AdministrationController::class, 'updateTeacher'])
+        ->middleware('pps.can:admin_panel.manage');
+    Route::delete('/admin/teachers/{teacher}', [AdministrationController::class, 'destroyTeacher'])
         ->middleware('pps.can:admin_panel.manage');
 
     Route::post('/admin/streams', [AdministrationController::class, 'storeStream'])

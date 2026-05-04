@@ -4,9 +4,13 @@ namespace App\Http\Controllers\Api\V1\Pps;
 
 use App\Http\Controllers\Controller;
 use App\Models\Pps\Assessment;
+use App\Models\Pps\ClassConfig;
 use App\Models\Pps\ClassSection;
 use App\Models\Pps\Department;
+use App\Models\Pps\SchoolClass;
+use App\Models\Pps\Section;
 use App\Models\Pps\ExamDefinition;
+use App\Models\Pps\ExamScope;
 use App\Models\Pps\GradeConfig;
 use App\Models\Pps\PretestMark;
 use App\Models\Pps\ResultSummary;
@@ -25,7 +29,7 @@ use Symfony\Component\HttpFoundation\Response;
 
 class AdministrationController extends Controller
 {
-    private const ASSESSMENT_TYPES = ['class_test', 'mid_term', 'final', 'assignment', 'quiz', 'practical'];
+    private const ASSESSMENT_TYPES = ['class_test', 'assessment_test', 'quiz', 'spot_test', 'mid_term', 'final', 'assignment', 'practical'];
 
     public function overview(): JsonResponse
     {
@@ -33,6 +37,8 @@ class AdministrationController extends Controller
             'summary' => [
                 'departments' => Department::query()->count(),
                 'class_sections' => ClassSection::query()->count(),
+                'classes' => SchoolClass::query()->count(),
+                'sections' => Section::query()->count(),
                 'subjects' => Subject::query()->count(),
                 'exams' => ExamDefinition::query()->count(),
                 'students' => Student::query()->count(),
@@ -42,9 +48,20 @@ class AdministrationController extends Controller
             'teachers' => User::query()
                 ->where('role', 'teacher')
                 ->orderBy('name')
-                ->get(['id', 'name', 'email']),
+                ->get(['id', 'name', 'email', 'is_active']),
             'departments' => Department::query()
                 ->orderBy('name')
+                ->get(),
+            'sections' => Section::query()
+                ->orderBy('name')
+                ->get(),
+            'classes' => SchoolClass::query()
+                ->orderBy('numeric_order')
+                ->orderBy('name')
+                ->get(),
+            'class_configs' => ClassConfig::query()
+                ->with('schoolClass:id,name,numeric_order', 'department:id,name,code', 'section:id,name')
+                ->orderBy('class_id')
                 ->get(),
             'class_sections' => ClassSection::query()
                 ->with('department:id,name,code')
@@ -56,7 +73,7 @@ class AdministrationController extends Controller
                 ->orderBy('name')
                 ->get(),
             'exams' => ExamDefinition::query()
-                ->with('department:id,name,code', 'subject:id,name,code')
+                ->with('scopes.subject:id,name,code', 'scopes.department:id,name,code')
                 ->orderByDesc('exam_date')
                 ->orderBy('title')
                 ->get(),
@@ -191,35 +208,52 @@ class AdministrationController extends Controller
     public function storeExam(Request $request): JsonResponse
     {
         $data = $request->validate($this->examRules());
+        $scopes = $data['scopes'] ?? [];
+        unset($data['scopes']);
 
-        // Warn on duplicate: same class+section+subject+term combination
-        $duplicate = ExamDefinition::query()
-            ->where('class_name', $data['class_name'] ?? null)
-            ->where('section', $data['section'] ?? null)
-            ->where('subject_id', $data['subject_id'] ?? null)
-            ->where('term', $data['term'] ?? null)
-            ->where('assessment_type', $data['assessment_type'])
-            ->exists();
+        return DB::transaction(function () use ($data, $scopes): JsonResponse {
+            $exam = ExamDefinition::query()->create($data);
 
-        if ($duplicate) {
+            foreach ($scopes as $scope) {
+                $exam->scopes()->create([
+                    'class_name'    => $scope['class_name'] ?? null,
+                    'section'       => $scope['section'] ?? null,
+                    'subject_id'    => $scope['subject_id'] ?? null,
+                    'department_id' => $scope['department_id'] ?? null,
+                ]);
+            }
+
             return response()->json([
-                'message' => 'An exam with the same class, section, subject, term, and type already exists.',
-            ], Response::HTTP_UNPROCESSABLE_ENTITY);
-        }
-
-        return response()->json([
-            'exam' => ExamDefinition::query()->create($data)->load('department:id,name,code', 'subject:id,name,code'),
-        ], Response::HTTP_CREATED);
+                'exam' => $exam->load('scopes.subject:id,name,code', 'scopes.department:id,name,code'),
+            ], Response::HTTP_CREATED);
+        });
     }
 
     public function updateExam(Request $request, ExamDefinition $exam): JsonResponse
     {
         $data = $request->validate($this->examRules($exam));
-        $exam->update($data);
+        $scopes = $data['scopes'] ?? null;
+        unset($data['scopes']);
 
-        return response()->json([
-            'exam' => $exam->fresh()->load('department:id,name,code', 'subject:id,name,code'),
-        ]);
+        return DB::transaction(function () use ($data, $scopes, $exam): JsonResponse {
+            $exam->update($data);
+
+            if ($scopes !== null) {
+                $exam->scopes()->delete();
+                foreach ($scopes as $scope) {
+                    $exam->scopes()->create([
+                        'class_name'    => $scope['class_name'] ?? null,
+                        'section'       => $scope['section'] ?? null,
+                        'subject_id'    => $scope['subject_id'] ?? null,
+                        'department_id' => $scope['department_id'] ?? null,
+                    ]);
+                }
+            }
+
+            return response()->json([
+                'exam' => $exam->fresh()->load('scopes.subject:id,name,code', 'scopes.department:id,name,code'),
+            ]);
+        });
     }
 
     public function destroyExam(ExamDefinition $exam): JsonResponse
@@ -234,7 +268,35 @@ class AdministrationController extends Controller
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
+        $exam->scopes()->delete();
         $exam->delete();
+
+        return response()->json(['deleted' => true]);
+    }
+
+    public function storeExamScope(Request $request, ExamDefinition $exam): JsonResponse
+    {
+        $data = $request->validate([
+            'class_name'    => ['nullable', 'string', 'max:20'],
+            'section'       => ['nullable', 'string', 'max:10'],
+            'subject_id'    => ['nullable', 'exists:pps_subjects,id'],
+            'department_id' => ['nullable', 'exists:pps_departments,id'],
+        ]);
+
+        $scope = $exam->scopes()->create($data);
+
+        return response()->json([
+            'scope' => $scope->load('subject:id,name,code', 'department:id,name,code'),
+        ], Response::HTTP_CREATED);
+    }
+
+    public function destroyExamScope(ExamDefinition $exam, ExamScope $scope): JsonResponse
+    {
+        if ($scope->exam_id !== $exam->id) {
+            return response()->json(['message' => 'Scope does not belong to this exam.'], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $scope->delete();
 
         return response()->json(['deleted' => true]);
     }
@@ -472,15 +534,16 @@ class AdministrationController extends Controller
                 'max:40',
                 Rule::unique('pps_exam_definitions', 'code')->ignore($exam?->id),
             ],
-            'assessment_type' => ['required', Rule::in(self::ASSESSMENT_TYPES)],
-            'term' => ['nullable', 'string', 'max:30'],
-            'total_marks' => ['required', 'numeric', 'gt:0'],
-            'exam_date' => ['nullable', 'date'],
-            'class_name' => ['nullable', 'string', 'max:20'],
-            'section' => ['nullable', 'string', 'max:10'],
-            'department_id' => ['nullable', 'exists:pps_departments,id'],
-            'subject_id' => ['nullable', 'exists:pps_subjects,id'],
-            'is_active' => ['sometimes', 'boolean'],
+            'assessment_type'              => ['required', Rule::in(self::ASSESSMENT_TYPES)],
+            'term'                         => ['nullable', 'string', 'max:30'],
+            'total_marks'                  => ['required', 'numeric', 'gt:0'],
+            'exam_date'                    => ['nullable', 'date'],
+            'is_active'                    => ['sometimes', 'boolean'],
+            'scopes'                       => ['sometimes', 'array'],
+            'scopes.*.class_name'          => ['nullable', 'string', 'max:20'],
+            'scopes.*.section'             => ['nullable', 'string', 'max:10'],
+            'scopes.*.subject_id'          => ['nullable', 'exists:pps_subjects,id'],
+            'scopes.*.department_id'       => ['nullable', 'exists:pps_departments,id'],
         ];
     }
 
@@ -523,6 +586,123 @@ class AdministrationController extends Controller
             'guardian_phone' => ['nullable', 'string', 'max:50'],
             'guardian_email' => ['nullable', 'email'],
         ];
+    }
+
+    // ─── Section CRUD ────────────────────────────────────────────────────────
+
+    public function storeSection(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'name' => ['required', 'string', 'max:30', 'unique:pps_sections,name'],
+            'is_active' => ['sometimes', 'boolean'],
+        ]);
+
+        return response()->json(['section' => Section::query()->create($data)], Response::HTTP_CREATED);
+    }
+
+    public function updateSection(Request $request, Section $section): JsonResponse
+    {
+        $data = $request->validate([
+            'name' => ['sometimes', 'string', 'max:30', Rule::unique('pps_sections', 'name')->ignore($section->id)],
+            'is_active' => ['sometimes', 'boolean'],
+        ]);
+
+        $section->update($data);
+
+        return response()->json(['section' => $section->fresh()]);
+    }
+
+    public function destroySection(Section $section): JsonResponse
+    {
+        if (ClassConfig::query()->where('section_id', $section->id)->exists()) {
+            return response()->json([
+                'message' => 'This section is used in class configurations. Remove those configs first.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $section->delete();
+
+        return response()->json(['deleted' => true]);
+    }
+
+    // ─── Class CRUD ───────────────────────────────────────────────────────────
+
+    public function storeClass(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'name' => ['required', 'string', 'max:50', 'unique:pps_classes,name'],
+            'numeric_order' => ['nullable', 'integer', 'min:1'],
+            'is_active' => ['sometimes', 'boolean'],
+            'departments' => ['sometimes', 'array'],
+            'departments.*.department_id' => ['required', 'exists:pps_departments,id'],
+            'departments.*.section_ids' => ['required', 'array'],
+            'departments.*.section_ids.*' => ['integer', 'exists:pps_sections,id'],
+        ]);
+
+        return DB::transaction(function () use ($data): JsonResponse {
+            $schoolClass = SchoolClass::query()->create([
+                'name' => $data['name'],
+                'numeric_order' => $data['numeric_order'] ?? null,
+                'is_active' => $data['is_active'] ?? true,
+            ]);
+
+            foreach ($data['departments'] ?? [] as $deptRow) {
+                foreach ($deptRow['section_ids'] as $sectionId) {
+                    ClassConfig::query()->create([
+                        'class_id' => $schoolClass->id,
+                        'department_id' => $deptRow['department_id'],
+                        'section_id' => $sectionId,
+                    ]);
+                }
+            }
+
+            return response()->json([
+                'class' => $schoolClass->load('classConfigs.department:id,name,code', 'classConfigs.section:id,name'),
+            ], Response::HTTP_CREATED);
+        });
+    }
+
+    public function updateClass(Request $request, SchoolClass $schoolClass): JsonResponse
+    {
+        $data = $request->validate([
+            'name' => ['sometimes', 'string', 'max:50', Rule::unique('pps_classes', 'name')->ignore($schoolClass->id)],
+            'numeric_order' => ['nullable', 'integer', 'min:1'],
+            'is_active' => ['sometimes', 'boolean'],
+            'departments' => ['sometimes', 'array'],
+            'departments.*.department_id' => ['required', 'exists:pps_departments,id'],
+            'departments.*.section_ids' => ['required', 'array'],
+            'departments.*.section_ids.*' => ['integer', 'exists:pps_sections,id'],
+        ]);
+
+        return DB::transaction(function () use ($data, $schoolClass): JsonResponse {
+            $schoolClass->update(Arr::only($data, ['name', 'numeric_order', 'is_active']));
+
+            if (array_key_exists('departments', $data)) {
+                $schoolClass->classConfigs()->delete();
+
+                foreach ($data['departments'] as $deptRow) {
+                    foreach ($deptRow['section_ids'] as $sectionId) {
+                        ClassConfig::query()->create([
+                            'class_id' => $schoolClass->id,
+                            'department_id' => $deptRow['department_id'],
+                            'section_id' => $sectionId,
+                        ]);
+                    }
+                }
+            }
+
+            return response()->json([
+                'class' => $schoolClass->fresh()->load('classConfigs.department:id,name,code', 'classConfigs.section:id,name'),
+            ]);
+        });
+    }
+
+    public function destroyClass(SchoolClass $schoolClass): JsonResponse
+    {
+        $schoolClass->classConfigs()->delete();
+        $schoolClass->delete();
+
+        return response()->json(['deleted' => true]);
     }
 
     // ─── Stream CRUD ──────────────────────────────────────────────────────────
@@ -621,6 +801,72 @@ class AdministrationController extends Controller
         return response()->json([
             'grade_config' => GradeConfig::query()->whereNull('school_id')->orderBy('sort_order')->get(),
         ]);
+    }
+
+    // ─── Teacher CRUD ─────────────────────────────────────────────────────────
+
+    public function storeTeacher(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'name'      => ['required', 'string', 'max:255'],
+            'email'     => ['required', 'email', 'max:255', 'unique:users,email'],
+            'password'  => ['nullable', 'string', 'min:8'],
+            'is_active' => ['sometimes', 'boolean'],
+        ]);
+
+        $teacher = User::query()->create([
+            'name'      => $data['name'],
+            'email'     => $data['email'],
+            'password'  => $data['password'] ?? \Illuminate\Support\Str::random(16),
+            'role'      => User::ROLE_TEACHER,
+            'is_active' => $data['is_active'] ?? true,
+        ]);
+
+        return response()->json([
+            'teacher' => $teacher->only(['id', 'name', 'email', 'is_active']),
+        ], Response::HTTP_CREATED);
+    }
+
+    public function updateTeacher(Request $request, User $teacher): JsonResponse
+    {
+        if ($teacher->role !== User::ROLE_TEACHER) {
+            return response()->json(['message' => 'This user is not a teacher.'], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $data = $request->validate([
+            'name'      => ['sometimes', 'string', 'max:255'],
+            'email'     => ['sometimes', 'email', 'max:255', Rule::unique('users', 'email')->ignore($teacher->id)],
+            'password'  => ['nullable', 'string', 'min:8'],
+            'is_active' => ['sometimes', 'boolean'],
+        ]);
+
+        if (isset($data['password'])) {
+            $teacher->update(['password' => $data['password']]);
+            unset($data['password']);
+        }
+
+        $teacher->update($data);
+
+        return response()->json([
+            'teacher' => $teacher->fresh()->only(['id', 'name', 'email', 'is_active']),
+        ]);
+    }
+
+    public function destroyTeacher(User $teacher): JsonResponse
+    {
+        if ($teacher->role !== User::ROLE_TEACHER) {
+            return response()->json(['message' => 'This user is not a teacher.'], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        if (TeacherAssignment::query()->where('teacher_id', $teacher->id)->exists()) {
+            return response()->json([
+                'message' => 'This teacher has active assignments. Remove assignments before deleting.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $teacher->delete();
+
+        return response()->json(['deleted' => true]);
     }
 
     private function nullableString(mixed $value): ?string
