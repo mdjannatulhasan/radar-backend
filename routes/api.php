@@ -24,6 +24,7 @@ use App\Http\Controllers\Api\V1\Pps\StudentPerformanceController;
 use App\Http\Controllers\Api\V1\Pps\UserManagementController;
 use App\Http\Controllers\Api\V1\Pps\RolePermissionController;
 use App\Http\Controllers\Api\V1\Pps\WelfareController;
+use App\Http\Controllers\Api\V1\Pps\ClassStructureController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1/auth')
@@ -64,6 +65,8 @@ Route::prefix('v1/pps')
     Route::get('/students/{student}/counseling', [CounselingController::class, 'studentSessions'])
         ->middleware('pps.can:students.counseling');
 
+    Route::get('/classes/structure', [ClassStructureController::class, 'index'])
+        ->middleware('pps.can:students.view');
     Route::get('/classes/{className}/{section}/analytics', [StudentPerformanceController::class, 'classAnalytics'])
         ->middleware('pps.can:classes.view');
     Route::get('/teachers/effectiveness', [StudentPerformanceController::class, 'teacherEffectiveness'])
