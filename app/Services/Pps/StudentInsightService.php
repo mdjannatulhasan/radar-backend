@@ -33,7 +33,7 @@ class StudentInsightService
     public function buildContext(Student $student, ?User $viewer): array
     {
         $viewerIsOwnerGuardian = $viewer?->hasAnyRole('guardian') && $viewer->isGuardianOf($student->id);
-        $hasFullContext = $viewer?->hasAnyRole(['principal', 'admin', 'counselor']) || $viewerIsOwnerGuardian;
+        $hasFullContext = $viewer?->hasAnyRole(['superadmin', 'principal', 'admin', 'counselor']) || $viewerIsOwnerGuardian;
 
         $base = [
             'admission_date' => $student->admission_date?->toDateString(),
