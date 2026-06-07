@@ -107,6 +107,7 @@ final class PpsPermissions
                 self::NOTIFICATIONS_RUN,
                 self::COUNSELING_MANAGE,
                 self::PSYCHOMETRIC_MANAGE,
+                self::WELFARE_VIEW,       // principals can view welfare cases (read-only)
                 self::PARENT_PORTAL_VIEW,
                 self::PARENT_REPORT_VIEW,
                 self::NOTICES_VIEW,

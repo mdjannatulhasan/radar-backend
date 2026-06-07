@@ -45,7 +45,7 @@ class StudentPerformanceController extends Controller
         /** @var User|null $viewer */
         $viewer = $request->user();
         $period = $this->resolvePeriod($request);
-        $perPage = min(100, max(1, (int) $request->integer('limit', 24)));
+        $perPage = min(500, max(1, (int) $request->integer('limit', 24)));
 
         $snapshots = PerformanceSnapshot::query()
             ->forPeriod($period)

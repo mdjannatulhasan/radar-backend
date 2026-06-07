@@ -22,11 +22,28 @@ class PpsDemoSeeder extends Seeder
 {
     public const DEMO_PASSWORD = 'PpsDemo2026!';
     private const GIVEN_NAMES = [
-        'Amina', 'Rafi', 'Nusrat', 'Hasib', 'Tanzim', 'Ishrat', 'Tahmid', 'Maliha', 'Farhan', 'Samia',
-        'Adnan', 'Raisa', 'Mahin', 'Faria', 'Shafin', 'Tuba', 'Nafis', 'Orin', 'Zayan', 'Muntasir',
+        // Female names
+        'Amina', 'Nusrat', 'Ishrat', 'Maliha', 'Samia', 'Raisa', 'Faria', 'Tuba', 'Orin', 'Sabrina',
+        'Roksana', 'Mehnaz', 'Sumaiya', 'Nafisa', 'Lamia', 'Tasnim', 'Sanjida', 'Jannatul', 'Rumana', 'Halima',
+        // Male names
+        'Rafi', 'Hasib', 'Tanzim', 'Tahmid', 'Farhan', 'Adnan', 'Mahin', 'Shafin', 'Nafis', 'Zayan',
+        'Muntasir', 'Rifat', 'Saad', 'Nabil', 'Rakib', 'Abrar', 'Mahir', 'Imran', 'Sajid', 'Towhid',
+        'Arif', 'Jubayer', 'Miraz', 'Shadman', 'Tahsin', 'Rezwan', 'Fahim', 'Sumon', 'Asif', 'Ridwan',
     ];
     private const FAMILY_NAMES = [
         'Rahman', 'Islam', 'Hasan', 'Akter', 'Chowdhury', 'Karim', 'Sultana', 'Hossain', 'Ahmed', 'Kabir',
+        'Molla', 'Begum', 'Miah', 'Biswas', 'Sarkar', 'Sheikh', 'Mondal', 'Talukder', 'Bhuiyan', 'Khandaker',
+    ];
+    private const GUARDIAN_GIVEN_NAMES = [
+        'Abdur', 'Mahbub', 'Shahidul', 'Nurul', 'Mizanur', 'Rezaul', 'Habibur', 'Sirajul', 'Mostafa',
+        'Jamal', 'Kamal', 'Alamgir', 'Rafiqul', 'Shamsul', 'Nazrul', 'Anwarul', 'Fazlur', 'Khairul',
+        'Farida', 'Rahela', 'Morjina', 'Shahana', 'Hasina', 'Nasima', 'Bilkis', 'Jahanara', 'Kohinur',
+        'Rasheda', 'Sultana', 'Monowara', 'Firoza', 'Roksana', 'Tanjina', 'Ferdousi', 'Shefali',
+    ];
+    private const GUARDIAN_RELATIONS = ['father', 'mother', 'grandfather', 'grandmother', 'uncle', 'aunt', 'elder brother'];
+    private const GUARDIAN_OCCUPATIONS = [
+        'teacher', 'business', 'government service', 'private service', 'farmer', 'doctor',
+        'engineer', 'daily labour', 'works abroad', 'retired', 'NGO worker', 'shop owner',
     ];
 
     public function run(): void
@@ -75,15 +92,23 @@ class PpsDemoSeeder extends Seeder
                 'class_name'   => '8', 'section' => 'A', 'roll_number' => 21,
                 'guardian_name' => 'Farzana Islam', 'guardian_phone' => '+8801711000001',
                 'guardian_email' => 'guardian.rafi@pps.local',
+                'guardian_relation' => 'mother',
+                'guardian_profession' => 'Garment Worker', 'guardian_profession_category' => 'labor',
+                'guardian_time_availability' => 'low',
+                'second_guardian_name' => null, 'second_guardian_phone' => null,
+                'second_guardian_relation' => null, 'second_guardian_profession' => null,
+                'second_guardian_profession_category' => null, 'second_guardian_time_availability' => null,
+                'willingness_score' => 3, 'ability_score' => 2, 'student_quadrant' => 'willing_unable',
+                'economically_vulnerable' => true,
                 'seed_type'    => 'urgent',
-                'family_status' => 'single parent', 'economic_status' => 'scholarship supported',
+                'family_status' => 'single parent (mother)', 'economic_status' => 'scholarship supported',
                 'scholarship_status' => 'partial scholarship',
-                'health_notes' => 'Seasonal asthma noted.',
+                'health_notes' => 'Seasonal asthma noted. Inhaler kept at school office.',
                 'special_needs' => ['dyslexia_support'],
                 'private_tuition_subjects' => [
                     ['subject' => 'Mathematics', 'hours_per_week' => 3, 'tutor_name' => 'Mahin Sir'],
                 ],
-                'confidential_context' => 'Family stress noted by counselor.',
+                'confidential_context' => 'Mother works double shifts; rarely available for school contact. Family stress noted by counselor. Dyslexia assessment pending.',
             ],
             [
                 'student_code' => 'PPS-DEMO-002',
@@ -91,6 +116,16 @@ class PpsDemoSeeder extends Seeder
                 'class_name'   => '7', 'section' => 'B', 'roll_number' => 7,
                 'guardian_name' => 'Rezaul Karim', 'guardian_phone' => '+8801711000002',
                 'guardian_email' => 'guardian.nabila@pps.local',
+                'guardian_relation' => 'father',
+                'guardian_profession' => 'Bank Officer', 'guardian_profession_category' => 'private_sector',
+                'guardian_time_availability' => 'medium',
+                'second_guardian_name' => 'Nasrin Karim', 'second_guardian_phone' => '+8801711000022',
+                'second_guardian_relation' => 'mother',
+                'second_guardian_profession' => 'Private College Lecturer',
+                'second_guardian_profession_category' => 'education',
+                'second_guardian_time_availability' => 'medium',
+                'willingness_score' => 4, 'ability_score' => 3, 'student_quadrant' => 'willing_able',
+                'economically_vulnerable' => false,
                 'seed_type'    => 'good',
                 'family_status' => 'stable', 'economic_status' => 'standard',
                 'scholarship_status' => null, 'health_notes' => null,
@@ -103,6 +138,16 @@ class PpsDemoSeeder extends Seeder
                 'class_name'   => '6', 'section' => 'A', 'roll_number' => 12,
                 'guardian_name' => 'Mizanur Rahman', 'guardian_phone' => '+8801711000003',
                 'guardian_email' => 'guardian.sadia@pps.local',
+                'guardian_relation' => 'father',
+                'guardian_profession' => 'Works Abroad (Remittance)', 'guardian_profession_category' => 'other',
+                'guardian_time_availability' => 'low',
+                'second_guardian_name' => 'Rahela Rahman', 'second_guardian_phone' => '+8801711000033',
+                'second_guardian_relation' => 'mother',
+                'second_guardian_profession' => 'Homemaker',
+                'second_guardian_profession_category' => 'other',
+                'second_guardian_time_availability' => 'high',
+                'willingness_score' => 2, 'ability_score' => 3, 'student_quadrant' => 'unwilling_able',
+                'economically_vulnerable' => false,
                 'seed_type'    => 'watch',
                 'family_status' => 'guardian works abroad', 'economic_status' => 'standard',
                 'scholarship_status' => null, 'health_notes' => null,
@@ -110,7 +155,7 @@ class PpsDemoSeeder extends Seeder
                 'private_tuition_subjects' => [
                     ['subject' => 'English', 'hours_per_week' => 2, 'tutor_name' => 'Sharmin Madam'],
                 ],
-                'confidential_context' => null,
+                'confidential_context' => 'Father works in Malaysia. Mother manages household alone. Guardian phone contact infrequent.',
             ],
             [
                 'student_code' => 'PPS-DEMO-004',
@@ -118,11 +163,21 @@ class PpsDemoSeeder extends Seeder
                 'class_name'   => '9', 'section' => 'A', 'roll_number' => 14,
                 'guardian_name' => 'Habibur Rahman', 'guardian_phone' => '+8801756789012',
                 'guardian_email' => 'guardian.karim@pps.local',
+                'guardian_relation' => 'father',
+                'guardian_profession' => 'Businessman (Wholesale)', 'guardian_profession_category' => 'business',
+                'guardian_time_availability' => 'low',
+                'second_guardian_name' => 'Hosne Ara Rahman', 'second_guardian_phone' => '+8801756789099',
+                'second_guardian_relation' => 'mother',
+                'second_guardian_profession' => 'Homemaker',
+                'second_guardian_profession_category' => 'other',
+                'second_guardian_time_availability' => 'high',
+                'willingness_score' => 2, 'ability_score' => 3, 'student_quadrant' => 'unwilling_able',
+                'economically_vulnerable' => false,
                 'seed_type'    => 'attendance_crisis',
                 'family_status' => 'stable', 'economic_status' => 'standard',
                 'scholarship_status' => null, 'health_notes' => 'Repeated absence with no medical certificate.',
                 'special_needs' => [], 'private_tuition_subjects' => [],
-                'confidential_context' => 'Guardian unreachable for two consecutive weeks.',
+                'confidential_context' => 'Guardian unreachable for two consecutive weeks. Business trips cited as reason. Student may be left unsupervised.',
             ],
             [
                 'student_code' => 'PPS-DEMO-005',
@@ -130,10 +185,23 @@ class PpsDemoSeeder extends Seeder
                 'class_name'   => '10', 'section' => 'A', 'roll_number' => 2,
                 'guardian_name' => 'Kamrun Nahar', 'guardian_phone' => '+8801844332211',
                 'guardian_email' => 'guardian.mehedi@pps.local',
+                'guardian_relation' => 'mother',
+                'guardian_profession' => 'Government School Teacher', 'guardian_profession_category' => 'education',
+                'guardian_time_availability' => 'high',
+                'second_guardian_name' => 'Kamal Uddin Ahmed', 'second_guardian_phone' => '+8801844332200',
+                'second_guardian_relation' => 'father',
+                'second_guardian_profession' => 'Engineer (Private Firm)',
+                'second_guardian_profession_category' => 'private_sector',
+                'second_guardian_time_availability' => 'low',
+                'willingness_score' => 5, 'ability_score' => 5, 'student_quadrant' => 'willing_able',
+                'economically_vulnerable' => false,
                 'seed_type'    => 'strong',
                 'family_status' => 'stable', 'economic_status' => 'standard',
                 'scholarship_status' => null, 'health_notes' => null,
-                'special_needs' => [], 'private_tuition_subjects' => [],
+                'special_needs' => [], 'private_tuition_subjects' => [
+                    ['subject' => 'Mathematics', 'hours_per_week' => 4, 'tutor_name' => 'Rahim Sir'],
+                    ['subject' => 'English', 'hours_per_week' => 3, 'tutor_name' => 'Sharmin Madam'],
+                ],
                 'confidential_context' => null,
             ],
             [
@@ -142,6 +210,16 @@ class PpsDemoSeeder extends Seeder
                 'class_name'   => '8', 'section' => 'B', 'roll_number' => 6,
                 'guardian_name' => 'Hosne Ara Begum', 'guardian_phone' => '+8801966543210',
                 'guardian_email' => 'guardian.lubna@pps.local',
+                'guardian_relation' => 'mother',
+                'guardian_profession' => 'Farmer', 'guardian_profession_category' => 'agriculture',
+                'guardian_time_availability' => 'high',
+                'second_guardian_name' => 'Jalal Chowdhury', 'second_guardian_phone' => '+8801966543211',
+                'second_guardian_relation' => 'father',
+                'second_guardian_profession' => 'Farmer',
+                'second_guardian_profession_category' => 'agriculture',
+                'second_guardian_time_availability' => 'high',
+                'willingness_score' => 4, 'ability_score' => 3, 'student_quadrant' => 'willing_able',
+                'economically_vulnerable' => true,
                 'seed_type'    => 'recovering',
                 'family_status' => 'stable', 'economic_status' => 'scholarship supported',
                 'scholarship_status' => 'full scholarship',
@@ -150,7 +228,7 @@ class PpsDemoSeeder extends Seeder
                     ['subject' => 'Mathematics', 'hours_per_week' => 2, 'tutor_name' => 'Rahima Madam'],
                     ['subject' => 'Science',     'hours_per_week' => 2, 'tutor_name' => 'Farhan Sir'],
                 ],
-                'confidential_context' => 'Was referred to counseling three months ago. Showing strong recovery.',
+                'confidential_context' => 'Was referred to counseling three months ago due to exam anxiety. Showing strong recovery. Guardian highly cooperative.',
             ],
             [
                 'student_code' => 'PPS-DEMO-007',
@@ -158,12 +236,22 @@ class PpsDemoSeeder extends Seeder
                 'class_name'   => '6', 'section' => 'B', 'roll_number' => 3,
                 'guardian_name' => 'Shahadat Hossain', 'guardian_phone' => '+8801612345678',
                 'guardian_email' => 'guardian.tasneem@pps.local',
+                'guardian_relation' => 'father',
+                'guardian_profession' => 'Army Officer', 'guardian_profession_category' => 'military',
+                'guardian_time_availability' => 'low',
+                'second_guardian_name' => 'Fatema Hossain', 'second_guardian_phone' => '+8801612345679',
+                'second_guardian_relation' => 'mother',
+                'second_guardian_profession' => 'Homemaker',
+                'second_guardian_profession_category' => 'other',
+                'second_guardian_time_availability' => 'high',
+                'willingness_score' => 3, 'ability_score' => 2, 'student_quadrant' => 'willing_unable',
+                'economically_vulnerable' => false,
                 'seed_type'    => 'academic_crisis',
                 'family_status' => 'stable', 'economic_status' => 'standard',
                 'scholarship_status' => null, 'health_notes' => null,
                 'special_needs' => ['learning_difficulty'],
                 'private_tuition_subjects' => [],
-                'confidential_context' => 'Good attendance but failing multiple subjects. Learning assessment recommended.',
+                'confidential_context' => 'Good attendance but failing multiple subjects. Father stationed away; mother manages alone. Learning assessment strongly recommended.',
             ],
             [
                 'student_code' => 'PPS-DEMO-008',
@@ -171,36 +259,58 @@ class PpsDemoSeeder extends Seeder
                 'class_name'   => '9', 'section' => 'B', 'roll_number' => 9,
                 'guardian_name' => 'Mahfuz Alam', 'guardian_phone' => '+8801644332211',
                 'guardian_email' => 'guardian.nusrat@pps.local',
+                'guardian_relation' => 'father',
+                'guardian_profession' => 'Rickshaw/Auto Driver', 'guardian_profession_category' => 'labor',
+                'guardian_time_availability' => 'high',
+                'second_guardian_name' => null, 'second_guardian_phone' => null,
+                'second_guardian_relation' => null, 'second_guardian_profession' => null,
+                'second_guardian_profession_category' => null, 'second_guardian_time_availability' => null,
+                'willingness_score' => 4, 'ability_score' => 2, 'student_quadrant' => 'willing_unable',
+                'economically_vulnerable' => true,
                 'seed_type'    => 'warning',
-                'family_status' => 'single parent', 'economic_status' => 'scholarship supported',
+                'family_status' => 'single parent (father)', 'economic_status' => 'scholarship supported',
                 'scholarship_status' => 'partial scholarship',
                 'health_notes' => null, 'special_needs' => [],
                 'private_tuition_subjects' => [
                     ['subject' => 'English', 'hours_per_week' => 1, 'tutor_name' => 'Mim Madam'],
                 ],
-                'confidential_context' => null,
+                'confidential_context' => 'Mother deceased two years ago. Father raises three children alone. Financial pressure is significant.',
             ],
         ];
 
         foreach ($featured as $profile) {
             $student = Student::query()->create([
-                'student_code'             => $profile['student_code'],
-                'name'                     => $profile['name'],
-                'class_name'               => $profile['class_name'],
-                'section'                  => $profile['section'],
-                'roll_number'              => $profile['roll_number'],
-                'admission_date'           => now()->subYears(2)->startOfYear(),
-                'guardian_name'            => $profile['guardian_name'],
-                'guardian_phone'           => $profile['guardian_phone'],
-                'guardian_email'           => $profile['guardian_email'],
-                'private_tuition_subjects' => $profile['private_tuition_subjects'],
-                'private_tuition_notes'    => $profile['private_tuition_subjects'] !== [] ? 'Documented tuition support on file.' : null,
-                'family_status'            => $profile['family_status'],
-                'economic_status'          => $profile['economic_status'],
-                'scholarship_status'       => $profile['scholarship_status'],
-                'health_notes'             => $profile['health_notes'],
-                'special_needs'            => $profile['special_needs'],
-                'confidential_context'     => $profile['confidential_context'],
+                'student_code'                => $profile['student_code'],
+                'name'                        => $profile['name'],
+                'class_name'                  => $profile['class_name'],
+                'section'                     => $profile['section'],
+                'roll_number'                 => $profile['roll_number'],
+                'admission_date'              => now()->subYears(2)->startOfYear(),
+                'guardian_name'               => $profile['guardian_name'],
+                'guardian_phone'              => $profile['guardian_phone'],
+                'guardian_email'              => $profile['guardian_email'],
+                'guardian_relation'            => $profile['guardian_relation'],
+                'guardian_profession'         => $profile['guardian_profession'],
+                'guardian_profession_category'=> $profile['guardian_profession_category'],
+                'guardian_time_availability'  => $profile['guardian_time_availability'],
+                'second_guardian_name'        => $profile['second_guardian_name'],
+                'second_guardian_phone'       => $profile['second_guardian_phone'],
+                'second_guardian_relation'    => $profile['second_guardian_relation'],
+                'second_guardian_profession'  => $profile['second_guardian_profession'],
+                'second_guardian_profession_category' => $profile['second_guardian_profession_category'],
+                'second_guardian_time_availability'   => $profile['second_guardian_time_availability'],
+                'willingness_score'           => $profile['willingness_score'],
+                'ability_score'               => $profile['ability_score'],
+                'student_quadrant'            => $profile['student_quadrant'],
+                'economically_vulnerable'     => $profile['economically_vulnerable'],
+                'private_tuition_subjects'    => $profile['private_tuition_subjects'],
+                'private_tuition_notes'       => $profile['private_tuition_subjects'] !== [] ? 'Documented tuition support on file.' : null,
+                'family_status'               => $profile['family_status'],
+                'economic_status'             => $profile['economic_status'],
+                'scholarship_status'          => $profile['scholarship_status'],
+                'health_notes'               => $profile['health_notes'],
+                'special_needs'               => $profile['special_needs'],
+                'confidential_context'        => $profile['confidential_context'],
             ]);
 
             User::query()->firstOrCreate(
@@ -211,27 +321,9 @@ class PpsDemoSeeder extends Seeder
             $this->seedStudentDataset($student, $profile['seed_type'], $teachers, $principal, $counselor);
         }
 
-        // ── Bulk cohort: 5 per class/section = 50 students, deliberately varied ──
-        // Each index maps to a seed type so the distribution is deliberate, not random.
-        $bulkSeedTypes = [
-            1  => 'good',            2  => 'watch',           3  => 'good',
-            4  => 'warning',         5  => 'good',            6  => 'recovering',
-            7  => 'watch',           8  => 'good',            9  => 'attendance_crisis',
-            10 => 'good',            11 => 'urgent',          12 => 'watch',
-            13 => 'strong',          14 => 'good',            15 => 'warning',
-            16 => 'watch',           17 => 'good',            18 => 'academic_crisis',
-            19 => 'good',            20 => 'watch',           21 => 'good',
-            22 => 'urgent',          23 => 'recovering',      24 => 'watch',
-            25 => 'good',            26 => 'strong',          27 => 'warning',
-            28 => 'good',            29 => 'attendance_crisis', 30 => 'watch',
-            31 => 'good',            32 => 'watch',           33 => 'urgent',
-            34 => 'good',            35 => 'warning',         36 => 'good',
-            37 => 'academic_crisis', 38 => 'watch',           39 => 'good',
-            40 => 'strong',          41 => 'recovering',      42 => 'watch',
-            43 => 'good',            44 => 'urgent',          45 => 'good',
-            46 => 'warning',         47 => 'watch',           48 => 'good',
-            49 => 'strong',          50 => 'good',
-        ];
+        // ── Bulk cohort: 15 per class/section = 150 students ─────────────────────
+        // Roll number drives academic profile: roll 1-2 = top performers, roll 14-15 = at-risk.
+        // This mirrors the Bangladeshi convention where roll is assigned by exam rank.
 
         $periods = collect(range(5, 0))->map(
             fn (int $m) => now()->subMonths($m)->format('Y-m')
@@ -243,45 +335,96 @@ class PpsDemoSeeder extends Seeder
 
         foreach ($classes as $className) {
             foreach ($sections as $section) {
-                foreach (range(1, 5) as $roll) {
-                    $studentName = $this->generatedName($studentIndex);
-                    $guardianName = $this->generatedName($studentIndex + 17);
+                foreach (range(1, 15) as $roll) {
+                    $seedType  = $this->seedTypeForRoll($roll, $className, $section);
+                    $studentName  = $this->bulkStudentName($studentIndex);
+                    $guardianName = $this->bulkGuardianName($studentIndex);
+
+                    $guardianProfile = $this->guardianProfileForRoll($roll, $studentIndex);
+
+                    // Tuition: top students get enrichment; struggling students get remedial support
+                    $hasTuition = in_array($roll, [1, 2, 10, 11, 12, 13]) || ($studentIndex % 6 === 0);
+                    $tuitionSubjects = $hasTuition ? $this->tuitionSubjectsForRoll($roll, $studentIndex) : [];
+
+                    // Economic vulnerability: scholarship applicants are flagged automatically
+                    $isEconomicallyVulnerable = $guardianProfile['economically_vulnerable'];
+                    $economicStatus    = $isEconomicallyVulnerable ? 'scholarship supported' : 'standard';
+                    $scholarshipStatus = $isEconomicallyVulnerable
+                        ? ($roll >= 14 ? 'full scholarship' : 'partial scholarship')
+                        : null;
+
+                    // Family context: realistic spread, more difficult situations in higher rolls
+                    $familyStatus = $this->familyStatusForRoll($roll, $studentIndex);
+
+                    // Health: scattered, not correlated with performance
+                    $healthNotes = $studentIndex % 17 === 0 ? 'Seasonal asthma noted. Inhaler available at school office.' : null;
+                    $allergies   = $studentIndex % 19 === 0 ? 'Dust allergy, mild reaction' : ($studentIndex % 23 === 0 ? 'Food allergy — peanuts' : null);
+                    $medications = $studentIndex % 17 === 0 ? 'Salbutamol inhaler when needed' : null;
+
+                    $specialNeeds = match (true) {
+                        $studentIndex % 21 === 0 => ['dyslexia_support'],
+                        $studentIndex % 29 === 0 => ['hearing_impairment_mild'],
+                        $studentIndex % 37 === 0 => ['learning_difficulty'],
+                        default                  => [],
+                    };
+
+                    $confidentialContext = $this->confidentialContextForRoll($roll, $studentIndex, $familyStatus);
+                    $residenceNote = $studentIndex % 16 === 0 ? 'Moved to a new neighbourhood this term. Commute time increased.' : null;
+
+                    $abilityScore    = $this->abilityScoreForRoll($roll);
+                    $willingnessScore = $guardianProfile['willingness_score'];
+                    $quadrant = $this->studentQuadrant($willingnessScore, $abilityScore);
+
+                    $secondGuardian = $this->secondGuardianForBulk($roll, $studentIndex, $familyStatus, $guardianProfile);
 
                     $student = Student::query()->create([
-                        'student_code'             => sprintf('PPS-%03d', $studentIndex),
-                        'name'                     => $studentName,
-                        'class_name'               => $className,
-                        'section'                  => $section,
-                        'roll_number'              => $roll,
-                        'admission_date'           => now()->subYears(rand(1, 4))->startOfYear(),
-                        'guardian_name'            => $guardianName,
-                        'guardian_phone'           => '+880' . (string) rand(1700000000, 1999999999),
-                        'guardian_email'           => sprintf('guardian.bulk%03d@pps.local', $studentIndex),
-                        'private_tuition_subjects' => $studentIndex % 4 === 0 ? [
-                            ['subject' => 'Mathematics', 'hours_per_week' => 3, 'tutor_name' => 'Home Tutor'],
-                        ] : [],
-                        'private_tuition_notes'    => $studentIndex % 4 === 0 ? 'Weekly home tuition in mathematics.' : null,
-                        'family_status'            => match ($studentIndex % 8) {
-                            0 => 'single parent',
-                            3 => 'guardian works abroad',
-                            default => 'stable',
-                        },
-                        'economic_status'          => $studentIndex % 7 === 0 ? 'scholarship supported' : 'standard',
-                        'scholarship_status'       => $studentIndex % 7 === 0 ? 'partial scholarship' : null,
-                        'health_notes'             => $studentIndex % 9 === 0 ? 'Seasonal asthma noted.' : null,
-                        'allergies'                => $studentIndex % 11 === 0 ? 'Dust' : null,
-                        'medications'              => $studentIndex % 9 === 0 ? 'Inhaler when needed' : null,
-                        'residence_change_note'    => $studentIndex % 10 === 0 ? 'Moved to a new neighbourhood this term.' : null,
-                        'special_needs'            => $studentIndex % 13 === 0 ? ['dyslexia_support'] : [],
-                        'confidential_context'     => $studentIndex % 12 === 0 ? 'Home stress reported; counselor notified.' : null,
+                        'student_code'                => sprintf('PPS-%03d', $studentIndex),
+                        'name'                        => $studentName,
+                        'class_name'                  => $className,
+                        'section'                     => $section,
+                        'roll_number'                 => $roll,
+                        'admission_date'              => now()->subYears(
+                            (int) ($className) - 5 + ($studentIndex % 2)
+                        )->startOfYear(),
+                        'guardian_name'               => $guardianName,
+                        'guardian_phone'              => $this->generatePhone($studentIndex),
+                        'guardian_email'              => sprintf('guardian.bulk%03d@pps.local', $studentIndex),
+                        'guardian_relation'           => $guardianProfile['relation'],
+                        'guardian_profession'         => $guardianProfile['profession'],
+                        'guardian_profession_category'=> $guardianProfile['category'],
+                        'guardian_time_availability'  => $guardianProfile['time_availability'],
+                        'second_guardian_name'        => $secondGuardian['name'],
+                        'second_guardian_phone'       => $secondGuardian['phone'],
+                        'second_guardian_relation'    => $secondGuardian['relation'],
+                        'second_guardian_profession'  => $secondGuardian['profession'],
+                        'second_guardian_profession_category' => $secondGuardian['category'],
+                        'second_guardian_time_availability'   => $secondGuardian['time_availability'],
+                        'willingness_score'           => $willingnessScore,
+                        'ability_score'               => $abilityScore,
+                        'student_quadrant'            => $quadrant,
+                        'economically_vulnerable'     => $isEconomicallyVulnerable,
+                        'private_tuition_subjects'    => $tuitionSubjects,
+                        'private_tuition_notes'       => $tuitionSubjects !== [] ? $this->tuitionNote($roll, $tuitionSubjects) : null,
+                        'family_status'               => $familyStatus,
+                        'economic_status'             => $economicStatus,
+                        'scholarship_status'          => $scholarshipStatus,
+                        'health_notes'                => $healthNotes,
+                        'allergies'                   => $allergies,
+                        'medications'                 => $medications,
+                        'residence_change_note'       => $residenceNote,
+                        'special_needs'               => $specialNeeds,
+                        'confidential_context'        => $confidentialContext,
                     ]);
 
                     User::query()->firstOrCreate(
                         ['email' => $student->guardian_email],
-                        ['name' => $student->guardian_name ?? 'Guardian', 'role' => 'guardian', 'password' => Hash::make(self::DEMO_PASSWORD)],
+                        [
+                            'name'     => $guardianName,
+                            'role'     => 'guardian',
+                            'password' => Hash::make(self::DEMO_PASSWORD),
+                        ],
                     );
 
-                    $seedType = $bulkSeedTypes[$studentIndex] ?? 'good';
                     $this->seedStudentDataset($student, $seedType, $teachers, $principal, $counselor, $studentIndex, $periods);
                     $studentIndex++;
                 }
@@ -289,6 +432,277 @@ class PpsDemoSeeder extends Seeder
         }
     }
 
+    /**
+     * Map roll number to a seed type. Roll 1 = top of class, Roll 15 = most at risk.
+     * Introduces slight variation per class and section so not every class is identical.
+     */
+    private function seedTypeForRoll(int $roll, string $className, string $section): string
+    {
+        // Class/section offset to vary which students in the middle-ground get which type
+        $offset = ((int) $className + ($section === 'B' ? 3 : 0)) % 4;
+
+        return match (true) {
+            $roll <= 2  => 'strong',
+            $roll <= 5  => 'good',
+            $roll <= 7  => ($offset % 2 === 0) ? 'good' : 'watch',
+            $roll <= 9  => 'watch',
+            $roll <= 11 => ($offset % 3 === 0) ? 'recovering' : 'warning',
+            $roll === 12 => ($offset % 2 === 0) ? 'attendance_crisis' : 'warning',
+            $roll === 13 => ($offset % 2 === 0) ? 'academic_crisis' : 'warning',
+            $roll === 14 => ($offset % 3 === 0) ? 'recovering' : 'urgent',
+            default     => 'urgent',
+        };
+    }
+
+    private function tuitionSubjectsForRoll(int $roll, int $idx): array
+    {
+        // Top students: parents invest in enrichment
+        if ($roll <= 3) {
+            return [
+                ['subject' => 'Mathematics', 'hours_per_week' => 4, 'tutor_name' => $this->tutorName($idx, 0)],
+                ['subject' => 'English', 'hours_per_week' => 3, 'tutor_name' => $this->tutorName($idx, 1)],
+            ];
+        }
+        // Middle students: subject-specific support
+        if ($roll <= 9) {
+            $subject = ['Mathematics', 'English', 'Science', 'Bangla'][$idx % 4];
+
+            return [['subject' => $subject, 'hours_per_week' => 3, 'tutor_name' => $this->tutorName($idx, 0)]];
+        }
+        // Struggling students: remedial support, often Mathematics + English
+        return [
+            ['subject' => 'Mathematics', 'hours_per_week' => 5, 'tutor_name' => $this->tutorName($idx, 0)],
+            ['subject' => 'English', 'hours_per_week' => 4, 'tutor_name' => $this->tutorName($idx, 1)],
+        ];
+    }
+
+    private function tutorName(int $idx, int $slot): string
+    {
+        $tutors = [
+            ['Kamal Sir', 'Rahim Sir', 'Jamal Sir', 'Anwar Sir', 'Selim Sir', 'Hasan Sir', 'Monir Sir'],
+            ['Sharmin Madam', 'Rima Madam', 'Sonia Madam', 'Nasrin Madam', 'Parveen Madam', 'Laila Madam'],
+        ];
+
+        return $tutors[$slot % 2][($idx + $slot * 3) % count($tutors[$slot % 2])];
+    }
+
+    private function tuitionNote(int $roll, array $subjects): string
+    {
+        $count = count($subjects);
+        if ($roll <= 3) {
+            return "Enrichment tuition in {$count} subject(s) — family invests in academic excellence.";
+        }
+        if ($roll <= 9) {
+            return "Supplementary tuition arranged for targeted improvement.";
+        }
+
+        return "Remedial home tuition in {$count} subject(s). Guardian seeking urgent academic support.";
+    }
+
+    private function generatePhone(int $idx): string
+    {
+        // Deterministic but looks realistic — uses common BD operator prefixes
+        $prefixes = ['1711', '1712', '1715', '1716', '1812', '1813', '1914', '1915', '1712', '1611'];
+        $prefix = $prefixes[$idx % count($prefixes)];
+        $suffix = str_pad((string) (($idx * 7919 + 10000) % 1000000), 6, '0', STR_PAD_LEFT);
+
+        return '+8801' . substr($prefix, 1) . $suffix;
+    }
+
+    private function bulkStudentName(int $idx): string
+    {
+        $g = self::GIVEN_NAMES[$idx % count(self::GIVEN_NAMES)];
+        $f = self::FAMILY_NAMES[intdiv($idx, count(self::GIVEN_NAMES)) % count(self::FAMILY_NAMES)];
+
+        return $g . ' ' . $f;
+    }
+
+    private function bulkGuardianName(int $idx): string
+    {
+        $g = self::GUARDIAN_GIVEN_NAMES[$idx % count(self::GUARDIAN_GIVEN_NAMES)];
+        $f = self::FAMILY_NAMES[($idx + 5) % count(self::FAMILY_NAMES)];
+
+        return $g . ' ' . $f;
+    }
+
+    /**
+     * Returns guardian profiling data derived from the student's roll number and index.
+     * Profession and time availability are inferred from each other — doctors/lawyers/military
+     * have low time availability; teachers/farmers/retired have high availability.
+     * Economic vulnerability is inferred from profession, not asked directly.
+     */
+    private function guardianProfileForRoll(int $roll, int $idx): array
+    {
+        // Profession pool mapped to category, time_availability, economic_vulnerability, willingness
+        $professions = [
+            // [profession, category, time_availability, economically_vulnerable, base_willingness]
+            ['Doctor (Private Practice)',   'doctor',         'low',    false, 3],
+            ['Lawyer',                      'lawyer',         'low',    false, 3],
+            ['Army Officer',                'military',       'low',    false, 4],
+            ['Police Officer',              'government',     'low',    false, 4],
+            ['Government School Teacher',   'education',      'high',   false, 5],
+            ['Madrasa Teacher',             'education',      'high',   false, 5],
+            ['Private College Lecturer',    'education',      'medium', false, 4],
+            ['Bank Officer',                'private_sector', 'medium', false, 4],
+            ['Garment Manager',             'private_sector', 'medium', false, 3],
+            ['Businessman (Wholesale)',      'business',       'medium', false, 3],
+            ['Shopkeeper',                  'business',       'high',   true,  4],
+            ['Small Business Owner',        'business',       'medium', true,  3],
+            ['Farmer',                      'agriculture',    'high',   true,  4],
+            ['Rickshaw/Auto Driver',        'labor',          'high',   true,  4],
+            ['Garment Worker',              'labor',          'low',    true,  3],
+            ['Day Labour',                  'labor',          'high',   true,  3],
+            ['Works Abroad (Remittance)',   'other',          'low',    false, 2],
+            ['NGO Field Worker',            'government',     'medium', false, 4],
+            ['Retired Government Officer',  'government',     'high',   false, 5],
+            ['Nurse',                       'private_sector', 'low',    false, 4],
+            ['Engineer (Private Firm)',     'private_sector', 'low',    false, 3],
+            ['Tailor / Dressmaker',         'labor',          'medium', true,  4],
+            ['Accountant',                  'private_sector', 'medium', false, 4],
+            ['Imam / Religious Scholar',    'other',          'high',   true,  5],
+        ];
+
+        // Top-roll students (1-3) tend to have more engaged, white-collar guardians
+        // High-roll students (13-15) tend to have more labour/small-business guardians
+        if ($roll <= 3) {
+            $pool = array_filter($professions, fn ($p) => in_array($p[1], ['doctor', 'lawyer', 'education', 'government', 'private_sector'], true));
+        } elseif ($roll <= 9) {
+            $pool = array_filter($professions, fn ($p) => !in_array($p[1], ['labor'], true));
+        } else {
+            $pool = $professions; // full pool, all types
+        }
+
+        $pool = array_values($pool);
+        $entry = $pool[$idx % count($pool)];
+
+        [$profession, $category, $timeAvailability, $economicallyVulnerable, $baseWillingness] = $entry;
+
+        // Alternate primary guardian between father and mother
+        $relation = ($idx % 3 === 0) ? 'mother' : 'father';
+
+        // High-roll students with struggling parents: willingness may still be high even if ability is low
+        $willingnessNoise = (int) (($idx * 7 + 3) % 3) - 1; // -1, 0, or +1
+        $willingness = max(1, min(5, $baseWillingness + $willingnessNoise));
+
+        // For economically vulnerable, only flag if they'd realistically apply for scholarship
+        // (not all labour families apply; some don't know the process)
+        $actuallyVulnerable = $economicallyVulnerable && ($roll >= 10 || $idx % 5 === 0);
+
+        return [
+            'relation'               => $relation,
+            'profession'             => $profession,
+            'category'               => $category,
+            'time_availability'      => $timeAvailability,
+            'economically_vulnerable'=> $actuallyVulnerable,
+            'willingness_score'      => $willingness,
+        ];
+    }
+
+    /**
+     * Returns second guardian data (the other parent) for bulk students.
+     * Returns nulls for single-parent/deceased situations.
+     */
+    private function secondGuardianForBulk(int $roll, int $idx, string $familyStatus, array $primaryProfile): array
+    {
+        $noSecond = str_contains($familyStatus, 'deceased')
+            || str_contains($familyStatus, 'single parent')
+            || str_contains($familyStatus, 'separated')
+            || str_contains($familyStatus, 'divorced');
+
+        if ($noSecond) {
+            return ['name' => null, 'phone' => null, 'relation' => null, 'profession' => null, 'category' => null, 'time_availability' => null];
+        }
+
+        $secondRelation = $primaryProfile['relation'] === 'father' ? 'mother' : 'father';
+        $secondName = $this->bulkGuardianName($idx + 50); // offset to avoid same name as primary
+
+        // Second guardian profession: homemakers and low-availability professions for variety
+        $secondProfessions = [
+            ['Homemaker', 'other', 'high'],
+            ['Government School Teacher', 'education', 'high'],
+            ['Garment Worker', 'labor', 'low'],
+            ['Nurse', 'private_sector', 'low'],
+            ['Small Business Owner', 'business', 'medium'],
+            ['Tailor / Dressmaker', 'labor', 'medium'],
+            ['NGO Field Worker', 'government', 'medium'],
+            ['Homemaker', 'other', 'high'],
+            ['Private College Lecturer', 'education', 'medium'],
+            ['Homemaker', 'other', 'high'],
+        ];
+
+        [$profession, $category, $timeAvailability] = $secondProfessions[$idx % count($secondProfessions)];
+
+        return [
+            'name'             => $secondName,
+            'phone'            => $this->generatePhone($idx + 200),
+            'relation'         => $secondRelation,
+            'profession'       => $profession,
+            'category'         => $category,
+            'time_availability'=> $timeAvailability,
+        ];
+    }
+
+    private function familyStatusForRoll(int $roll, int $idx): string
+    {
+        return match (true) {
+            $roll >= 14 && $idx % 5 === 0  => 'mother deceased',
+            $roll >= 14 && $idx % 7 === 0  => 'father deceased',
+            $roll >= 13 && $idx % 9 === 0  => 'parents separated',
+            $roll >= 12 && $idx % 11 === 0 => 'parents divorced, child with grandmother',
+            $idx % 8 === 0                 => 'single parent (mother)',
+            $idx % 13 === 0                => 'single parent (father)',
+            $idx % 15 === 0                => 'guardian works abroad',
+            $idx % 20 === 0                => 'parents remarried',
+            default                        => 'stable',
+        };
+    }
+
+    private function confidentialContextForRoll(int $roll, int $idx, string $familyStatus): ?string
+    {
+        if (str_contains($familyStatus, 'deceased')) {
+            return 'Parental loss noted in family record. Student shows signs of emotional withdrawal. Counselor monitoring.';
+        }
+        if (str_contains($familyStatus, 'separated') || str_contains($familyStatus, 'divorced')) {
+            return 'Parental separation on record. Student performance has declined since last term. Counselor involved.';
+        }
+        if ($roll >= 14 && $idx % 4 === 0) {
+            return 'Guardian reports financial stress at home. Student shows visible anxiety before exams.';
+        }
+        if ($roll === 15 && $idx % 3 === 0) {
+            return 'Domestic situation unstable. Counselor has been notified. Weekly monitoring in place.';
+        }
+        if ($idx % 18 === 0) {
+            return 'Home stress reported; counselor notified.';
+        }
+
+        return null;
+    }
+
+    private function abilityScoreForRoll(int $roll): int
+    {
+        return match (true) {
+            $roll <= 2  => 5,
+            $roll <= 5  => 4,
+            $roll <= 9  => 3,
+            $roll <= 12 => 2,
+            default     => 1,
+        };
+    }
+
+    private function studentQuadrant(int $willingnessScore, int $abilityScore): string
+    {
+        $willing = $willingnessScore >= 3;
+        $able    = $abilityScore >= 3;
+
+        return match (true) {
+            $willing && $able   => 'willing_able',
+            !$willing && $able  => 'unwilling_able',
+            $willing && !$able  => 'willing_unable',
+            default             => 'unwilling_unable',
+        };
+    }
+
+    /** @deprecated Use bulkStudentName / bulkGuardianName instead */
     private function generatedName(int $seed): string
     {
         $given = self::GIVEN_NAMES[$seed % count(self::GIVEN_NAMES)];

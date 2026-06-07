@@ -2,9 +2,13 @@
 
 namespace Database\Seeders;
 
+use App\Models\Pps\ClassConfig;
 use App\Models\Pps\ClassSection;
 use App\Models\Pps\Department;
 use App\Models\Pps\ExamDefinition;
+use App\Models\Pps\ExamScope;
+use App\Models\Pps\SchoolClass;
+use App\Models\Pps\Section;
 use App\Models\Pps\Subject;
 use App\Models\User;
 use Illuminate\Database\Seeder;
@@ -34,14 +38,29 @@ class PpsAdministrationSeeder extends Seeder
         );
 
         foreach (['6', '7', '8', '9', '10'] as $className) {
-            foreach (['A', 'B'] as $section) {
+            foreach (['A', 'B'] as $sectionName) {
+                $deptId = in_array($className, ['9', '10'], true) ? $science->id : $general->id;
+
                 ClassSection::query()->updateOrCreate(
-                    ['class_name' => $className, 'section' => $section],
-                    [
-                        'department_id' => in_array($className, ['9', '10'], true) ? $science->id : $general->id,
-                        'capacity' => 45,
-                        'is_active' => true,
-                    ],
+                    ['class_name' => $className, 'section' => $sectionName],
+                    ['department_id' => $deptId, 'capacity' => 45, 'is_active' => true],
+                );
+
+                // Populate pps_classes, pps_sections, and pps_class_configs so the
+                // /classes/structure endpoint returns real data (not empty array).
+                $schoolClass = SchoolClass::query()->updateOrCreate(
+                    ['name' => $className],
+                    ['numeric_order' => (int) $className, 'is_active' => true],
+                );
+
+                $section = Section::query()->updateOrCreate(
+                    ['name' => $sectionName],
+                    ['is_active' => true],
+                );
+
+                ClassConfig::query()->updateOrCreate(
+                    ['class_id' => $schoolClass->id, 'section_id' => $section->id, 'department_id' => null],
+                    ['capacity' => 45, 'is_active' => true],
                 );
             }
         }
@@ -73,20 +92,21 @@ class PpsAdministrationSeeder extends Seeder
             foreach (['Bangla', 'English', 'Mathematics', 'Science', 'Social Studies'] as $subjectName) {
                 $subject = $subjectMap->get($subjectName);
 
-                ExamDefinition::query()->updateOrCreate(
+                $exam = ExamDefinition::query()->updateOrCreate(
                     ['code' => "{$className}-{$subject?->code}-MT-{$term}"],
                     [
-                        'title' => "{$subjectName} Mid Term",
+                        'title' => "{$subjectName} Mid Term — Class {$className}",
                         'assessment_type' => 'mid_term',
                         'term' => $term,
                         'total_marks' => 100,
                         'exam_date' => $examDate,
-                        'class_name' => $className,
-                        'section' => null,
-                        'department_id' => $subject?->department_id,
-                        'subject_id' => $subject?->id,
                         'is_active' => true,
                     ],
+                );
+
+                ExamScope::query()->updateOrCreate(
+                    ['exam_id' => $exam->id, 'class_name' => $className, 'section' => null, 'subject_id' => $subject?->id],
+                    ['department_id' => $subject?->department_id],
                 );
             }
         }

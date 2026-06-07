@@ -60,6 +60,8 @@ Route::prefix('v1/pps')
         ->middleware('pps.can:students.context_view');
     Route::patch('/students/{student}/context', [StudentPerformanceController::class, 'updateContext'])
         ->middleware('pps.can:students.context_update');
+    Route::get('/students/{student}/enrollment-history', [StudentPerformanceController::class, 'enrollmentHistory'])
+        ->middleware('pps.can:students.view');
     Route::post('/students/{student}/what-if', [StudentPerformanceController::class, 'whatIf'])
         ->middleware('pps.can:students.what_if');
     Route::get('/students/{student}/counseling', [CounselingController::class, 'studentSessions'])
