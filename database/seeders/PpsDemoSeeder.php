@@ -969,7 +969,6 @@ class PpsDemoSeeder extends Seeder
             ['midterm',        100,  5, 'T1'],
             ['midterm',        100,  5, 'T2'],
             ['final',          100, 15, 'T1'],
-            ['final',          100, 15, 'T2'],
         ];
 
         // Reference date anchors: T1 = 4 months ago, T2 = 1 month ago
