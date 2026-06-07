@@ -157,6 +157,7 @@ class StudentPerformanceController extends Controller
                 )
                 : null,
             'academic_profile' => $this->insights->buildAcademicProfile($student, $period, $snapshot),
+            'assessment_breakdown' => $this->buildAssessmentBreakdown($student->id),
             'context' => $this->insights->buildContext($student, $request->user()),
             'wellbeing' => $this->insights->buildWellbeing($student, $request->user()),
             'tuition_analysis' => $this->insights->buildTuitionAnalysis($student, $snapshot),
@@ -169,6 +170,56 @@ class StudentPerformanceController extends Controller
             'what_if_preview' => $defaultWhatIf,
             'forecast' => $this->forecastService->forecastForStudent($student->id, $period),
         ]);
+    }
+
+    private function buildAssessmentBreakdown(int $studentId): array
+    {
+        $rows = Assessment::query()
+            ->where('student_id', $studentId)
+            ->whereNotNull('marks_obtained')
+            ->get(['subject', 'assessment_type', 'term', 'marks_obtained', 'total_marks', 'percentage', 'exam_date']);
+
+        // Group: subject → assessment_type → list of scores
+        $bySubject = [];
+        foreach ($rows as $row) {
+            $subject = $row->subject;
+            $type    = $row->assessment_type;
+            if (!isset($bySubject[$subject])) {
+                $bySubject[$subject] = [];
+            }
+            if (!isset($bySubject[$subject][$type])) {
+                $bySubject[$subject][$type] = ['scores' => [], 'total_marks' => (float) $row->total_marks];
+            }
+            $bySubject[$subject][$type]['scores'][] = (float) $row->percentage;
+        }
+
+        $result = [];
+        foreach ($bySubject as $subject => $types) {
+            $examTypes = [];
+            $allScores = [];
+            foreach ($types as $type => $data) {
+                $scores = $data['scores'];
+                $avg    = round(array_sum($scores) / count($scores), 1);
+                $examTypes[$type] = [
+                    'avg'         => $avg,
+                    'highest'     => round(max($scores), 1),
+                    'lowest'      => round(min($scores), 1),
+                    'count'       => count($scores),
+                    'total_marks' => $data['total_marks'],
+                ];
+                $allScores = array_merge($allScores, $scores);
+            }
+            $result[] = [
+                'subject'    => $subject,
+                'overall_avg'=> count($allScores) ? round(array_sum($allScores) / count($allScores), 1) : 0,
+                'exam_types' => $examTypes,
+            ];
+        }
+
+        // Sort by subject name
+        usort($result, fn ($a, $b) => strcmp($a['subject'], $b['subject']));
+
+        return $result;
     }
 
     public function quickSearch(Request $request): JsonResponse
