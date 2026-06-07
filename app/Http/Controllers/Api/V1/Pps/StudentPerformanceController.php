@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1\Pps;
 
 use App\Http\Controllers\Controller;
+use App\Models\Pps\AcademicYear;
 use App\Models\Pps\Assessment;
 use App\Models\Pps\BehaviorCard;
 use App\Models\Pps\ClassroomRating;
@@ -270,6 +271,65 @@ class StudentPerformanceController extends Controller
         return response()->json([
             'message' => 'Student context updated.',
             'context' => $this->insights->buildContext($student->fresh(), $viewer),
+        ]);
+    }
+
+    public function enrollmentHistory(Request $request, Student $student): JsonResponse
+    {
+        /** @var \App\Models\User|null $viewer */
+        $viewer = $request->user();
+        if ($viewer?->hasAnyRole('teacher') && ! $viewer->canAccessStudent($student)) {
+            abort(Response::HTTP_FORBIDDEN, 'You are not assigned to this student.');
+        }
+
+        $enrollments = $student->enrollments()
+            ->with('academicYear:id,year_name,start_date,end_date,is_active')
+            ->orderBy('academic_year_id')
+            ->get();
+
+        $history = $enrollments->map(function ($enrollment) use ($student): array {
+            $year = $enrollment->academicYear;
+
+            $snapshots = PerformanceSnapshot::query()
+                ->where('student_id', $student->id)
+                ->when($year, function ($query) use ($year): void {
+                    $query->where(function ($q) use ($year): void {
+                        $q->whereYear('snapshot_period', $year->start_date->year)
+                          ->orWhereYear('snapshot_period', $year->end_date->year);
+                    });
+                })
+                ->orderBy('snapshot_period')
+                ->get(['snapshot_period', 'overall_score', 'academic_score', 'attendance_score', 'behavior_score', 'alert_level']);
+
+            $avgOverall = $snapshots->avg('overall_score');
+            $avgAcademic = $snapshots->avg('academic_score');
+            $avgAttendance = $snapshots->avg('attendance_score');
+
+            return [
+                'enrollment_id'  => $enrollment->id,
+                'academic_year'  => $year ? [
+                    'id'        => $year->id,
+                    'year_name' => $year->year_name,
+                    'is_active' => $year->is_active,
+                ] : null,
+                'class_name'     => $enrollment->class_name,
+                'section'        => $enrollment->section,
+                'roll_number'    => $enrollment->roll_number,
+                'status'         => $enrollment->status,
+                'is_current'     => $enrollment->is_current,
+                'started_at'     => $enrollment->started_at?->toDateString(),
+                'ended_at'       => $enrollment->ended_at?->toDateString(),
+                'snapshot_count' => $snapshots->count(),
+                'avg_overall'    => $avgOverall !== null ? round($avgOverall, 1) : null,
+                'avg_academic'   => $avgAcademic !== null ? round($avgAcademic, 1) : null,
+                'avg_attendance' => $avgAttendance !== null ? round($avgAttendance, 1) : null,
+                'snapshots'      => $snapshots->values(),
+            ];
+        });
+
+        return response()->json([
+            'student_id' => $student->id,
+            'enrollments' => $history,
         ]);
     }
 
