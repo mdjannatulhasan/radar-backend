@@ -954,31 +954,65 @@ class PpsDemoSeeder extends Seeder
             ['name' => 'Bangla',      'teacher' => $teachers[3]],
         ];
 
-        // Three months of assessments (more data = better analytics)
-        foreach ([-2, -1, 0] as $monthOffset) {
-            $date = now()->copy()->addMonths($monthOffset);
+        // 6 assessment types × 2 results each per subject
+        // Types: quiz, spot_test, class_test, assessment_test, midterm, final
+        $assessmentMatrix = [
+            // [type, total_marks, base_day_offset, term]
+            ['quiz',            20,  2, 'T1'],
+            ['quiz',            20,  9, 'T1'],
+            ['spot_test',       30,  4, 'T1'],
+            ['spot_test',       30, 11, 'T1'],
+            ['class_test',      50, 16, 'T1'],
+            ['class_test',      50, 22, 'T2'],
+            ['assessment_test', 75, 18, 'T1'],
+            ['assessment_test', 75, 20, 'T2'],
+            ['midterm',        100,  5, 'T1'],
+            ['midterm',        100,  5, 'T2'],
+            ['final',          100, 15, 'T1'],
+            ['final',          100, 15, 'T2'],
+        ];
 
-            foreach ($subjects as $subject) {
-                $score = $this->seedScoreForSubject($seedType, $subject['name'], $monthOffset, $id);
+        // Reference date anchors: T1 = 4 months ago, T2 = 1 month ago
+        $termDates = [
+            'T1' => now()->copy()->subMonths(4),
+            'T2' => now()->copy()->subMonths(1),
+        ];
+
+        foreach ($subjects as $si => $subject) {
+            foreach ($assessmentMatrix as $ai => [$type, $totalMarks, $dayOffset, $term]) {
+                $baseScore = $this->seedScoreForSubject($seedType, $subject['name'], 0, $id);
+                // Add slight noise per record so 2 results of each type differ
+                $noise     = (int)(($id * ($ai + 1) * 7 + $si * 13) % 11) - 5;
+                $obtained  = max(0, min($totalMarks, (int)round($baseScore / 100 * $totalMarks + $noise)));
+                $pct       = $totalMarks > 0 ? round($obtained / $totalMarks * 100, 1) : 0;
+
+                $subjectDayShift = match ($subject['name']) {
+                    'Mathematics' => 0,
+                    'English'     => 1,
+                    'Science'     => 2,
+                    default       => 3,
+                };
 
                 Assessment::query()->create([
-                    'student_id'     => $student->id,
-                    'teacher_id'     => $subject['teacher']->id,
-                    'subject'        => $subject['name'],
-                    'assessment_type'=> $monthOffset === 0 ? 'class_test' : ($monthOffset === -1 ? 'midterm' : 'assignment'),
-                    'term'           => sprintf('%s-term-%d', $date->format('Y'), $monthOffset === -2 ? 1 : 2),
-                    'marks_obtained' => $score,
-                    'total_marks'    => 100,
-                    'percentage'     => $score,
-                    'exam_date'      => $date->copy()->day(match ($subject['name']) {
-                        'Mathematics' => 10 + (($id * 3) % 5),
-                        'English'     => 14 + (($id * 5) % 5),
-                        'Science'     => 18 + (($id * 7) % 5),
-                        default       => 8 + (($id * 11) % 5),
-                    })->toDateString(),
-                    'remarks' => $this->assessmentRemark($seedType, $subject['name']),
+                    'student_id'      => $student->id,
+                    'teacher_id'      => $subject['teacher']->id,
+                    'subject'         => $subject['name'],
+                    'assessment_type' => $type,
+                    'term'            => now()->format('Y') . '-' . $term,
+                    'marks_obtained'  => $obtained,
+                    'total_marks'     => $totalMarks,
+                    'percentage'      => $pct,
+                    'exam_date'       => $termDates[$term]->copy()->day(
+                        min(28, $dayOffset + $subjectDayShift)
+                    )->toDateString(),
+                    'remarks'         => $this->assessmentRemark($seedType, $subject['name']),
                 ]);
             }
+        }
+
+        // Classroom ratings — keep 3 monthly snapshots
+        foreach ([-2, -1, 0] as $monthOffset) {
+            $date = now()->copy()->addMonths($monthOffset);
 
             ClassroomRating::query()->create([
                 'student_id'     => $student->id,
