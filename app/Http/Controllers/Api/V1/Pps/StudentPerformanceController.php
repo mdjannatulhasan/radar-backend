@@ -177,46 +177,53 @@ class StudentPerformanceController extends Controller
         $rows = Assessment::query()
             ->where('student_id', $studentId)
             ->whereNotNull('marks_obtained')
+            ->orderBy('exam_date')
             ->get(['subject', 'assessment_type', 'term', 'marks_obtained', 'total_marks', 'percentage', 'exam_date']);
 
-        // Group: subject → assessment_type → list of scores
+        // Group: subject → assessment_type → records
         $bySubject = [];
         foreach ($rows as $row) {
             $subject = $row->subject;
             $type    = $row->assessment_type;
-            if (!isset($bySubject[$subject])) {
-                $bySubject[$subject] = [];
-            }
-            if (!isset($bySubject[$subject][$type])) {
-                $bySubject[$subject][$type] = ['scores' => [], 'total_marks' => (float) $row->total_marks];
-            }
-            $bySubject[$subject][$type]['scores'][] = (float) $row->percentage;
+            $bySubject[$subject][$type]['records'][] = [
+                'obtained'    => round((float) $row->marks_obtained, 2),
+                'total'       => (float) $row->total_marks,
+                'percentage'  => round((float) $row->percentage, 1),
+                'date'        => $row->exam_date,
+                'term'        => $row->term,
+            ];
         }
 
         $result = [];
         foreach ($bySubject as $subject => $types) {
-            $examTypes = [];
-            $allScores = [];
+            $examTypes  = [];
+            $allPct     = [];
             foreach ($types as $type => $data) {
-                $scores = $data['scores'];
-                $avg    = round(array_sum($scores) / count($scores), 1);
+                $records    = $data['records'];
+                $pcts       = array_column($records, 'percentage');
+                $obtaineds  = array_column($records, 'obtained');
+                $totalMarks = $records[0]['total'];
+                $avgPct     = round(array_sum($pcts) / count($pcts), 1);
+                $avgObt     = round(array_sum($obtaineds) / count($obtaineds), 1);
+
                 $examTypes[$type] = [
-                    'avg'         => $avg,
-                    'highest'     => round(max($scores), 1),
-                    'lowest'      => round(min($scores), 1),
-                    'count'       => count($scores),
-                    'total_marks' => $data['total_marks'],
+                    'avg_pct'     => $avgPct,
+                    'avg_obtained'=> $avgObt,
+                    'total_marks' => $totalMarks,
+                    'highest_pct' => round(max($pcts), 1),
+                    'lowest_pct'  => round(min($pcts), 1),
+                    'count'       => count($records),
+                    'records'     => $records,
                 ];
-                $allScores = array_merge($allScores, $scores);
+                $allPct = array_merge($allPct, $pcts);
             }
             $result[] = [
-                'subject'    => $subject,
-                'overall_avg'=> count($allScores) ? round(array_sum($allScores) / count($allScores), 1) : 0,
-                'exam_types' => $examTypes,
+                'subject'     => $subject,
+                'overall_avg' => count($allPct) ? round(array_sum($allPct) / count($allPct), 1) : 0,
+                'exam_types'  => $examTypes,
             ];
         }
 
-        // Sort by subject name
         usort($result, fn ($a, $b) => strcmp($a['subject'], $b['subject']));
 
         return $result;
