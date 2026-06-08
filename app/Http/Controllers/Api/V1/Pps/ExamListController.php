@@ -13,7 +13,7 @@ class ExamListController extends Controller
         $exams = Exam::query()
             ->with([
                 'examType:id,code,is_terminal',
-                'components:id,exam_id,code,label,max_raw_marks,max_contribution,sort_order',
+                'components:id,exam_id,name,code,max_raw_marks,max_contribution,sort_order',
             ])
             ->where('is_active', true)
             ->orderBy('title')
@@ -29,7 +29,7 @@ class ExamListController extends Controller
             'components'    => $exam->components->map(fn ($c) => [
                 'id'               => $c->id,
                 'code'             => $c->code,
-                'label'            => $c->label,
+                'label'            => $c->name,
                 'max_raw_marks'    => $c->max_raw_marks,
                 'max_contribution' => $c->max_contribution,
             ])->values()->all(),
