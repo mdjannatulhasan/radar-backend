@@ -3,10 +3,10 @@
 namespace App\Http\Controllers\Api\V1\Pps;
 
 use App\Http\Controllers\Controller;
+use App\Models\Pps\ComputedScore;
+use App\Models\Pps\Exam;
 use App\Models\Pps\Extracurricular;
-use App\Models\Pps\ExamDefinition;
 use App\Models\Pps\PerformanceSnapshot;
-use App\Models\Pps\ResultSummary;
 use App\Models\Student;
 use App\Services\Pps\RecommendationService;
 use App\Services\Pps\StudentInsightService;
@@ -94,41 +94,69 @@ class ParentViewController extends Controller
      */
     private function buildPpsResults(Student $student, ?int $requestedExamId): array
     {
-        // All exams that have a computed result for this student
-        $allResults = ResultSummary::query()
+        // Find all exams that have computed scores for this student
+        $examIds = ComputedScore::query()
             ->where('student_id', $student->id)
-            ->with('exam:id,title,assessment_type,class_name')
-            ->orderByDesc('computed_at')
-            ->get();
+            ->distinct()
+            ->pluck('exam_id');
 
-        if ($allResults->isEmpty()) {
+        if ($examIds->isEmpty()) {
             return ['available_exams' => [], 'selected' => null];
         }
 
-        // Resolve which result to show
-        $selected = $requestedExamId
-            ? $allResults->firstWhere('exam_id', $requestedExamId)
-            : $allResults->first();
+        $exams = Exam::query()
+            ->with('examType:id,code')
+            ->whereIn('id', $examIds)
+            ->orderByDesc('exam_date')
+            ->get(['id', 'title', 'exam_type_id', 'exam_date']);
+
+        $selectedExamId = $requestedExamId && $exams->contains('id', $requestedExamId)
+            ? $requestedExamId
+            : $exams->first()?->id;
+
+        $selectedSummary = $selectedExamId
+            ? $this->aggregateScores($student->id, $selectedExamId)
+            : null;
 
         return [
-            'available_exams' => $allResults->map(fn ($r) => [
-                'exam_id'         => $r->exam_id,
-                'title'           => $r->exam?->title,
-                'assessment_type' => $r->exam?->assessment_type,
-                'computed_at'     => $r->computed_at?->toDateString(),
+            'available_exams' => $exams->map(fn ($e) => [
+                'exam_id'         => $e->id,
+                'title'           => $e->title,
+                'assessment_type' => $e->examType?->code,
+                'computed_at'     => $e->exam_date,
             ])->all(),
-            'selected' => $selected ? [
-                'exam_id'               => $selected->exam_id,
-                'exam_title'            => $selected->exam?->title,
-                'gpa'                   => $selected->gpa,
-                'letter_grade'          => $selected->letter_grade,
-                'total_marks_obtained'  => $selected->total_marks_obtained,
-                'total_marks_full'      => $selected->total_marks_full,
-                'class_position'        => $selected->class_position,
-                'total_students'        => $selected->total_students_in_class,
-                'is_promoted'           => $selected->is_promoted,
-                'computed_at'           => $selected->computed_at?->toDateString(),
-            ] : null,
+            'selected' => $selectedSummary,
+        ];
+    }
+
+    private function aggregateScores(int $studentId, int $examId): array
+    {
+        $exam = Exam::with('examType:id,code')->find($examId);
+        $scores = ComputedScore::query()
+            ->where('exam_id', $examId)
+            ->where('student_id', $studentId)
+            ->get(['total_obtained', 'total_possible', 'percentage', 'letter_grade', 'grade_point', 'computed_at']);
+
+        if ($scores->isEmpty()) {
+            return [];
+        }
+
+        $totalObtained = $scores->sum('total_obtained');
+        $totalPossible = $scores->sum('total_possible');
+        $pct = $totalPossible > 0 ? round($totalObtained / $totalPossible * 100, 2) : 0;
+
+        return [
+            'exam_id'              => $examId,
+            'exam_title'           => $exam?->title,
+            'gpa'                  => $scores->avg('grade_point'),
+            'letter_grade'         => $scores->sortBy('grade_point')->first()?->letter_grade ?? '—',
+            'total_marks_obtained' => $totalObtained,
+            'total_marks_full'     => $totalPossible,
+            'percentage'           => $pct,
+            'class_position'       => null,
+            'total_students'       => null,
+            'is_promoted'          => null,
+            'computed_at'          => $scores->max('computed_at'),
         ];
     }
 

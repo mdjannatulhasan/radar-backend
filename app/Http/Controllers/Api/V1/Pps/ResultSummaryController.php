@@ -3,12 +3,12 @@
 namespace App\Http\Controllers\Api\V1\Pps;
 
 use App\Http\Controllers\Controller;
-use App\Models\Pps\ExamDefinition;
-use App\Models\Pps\PretestMark;
-use App\Models\Pps\ResultSummary;
-use App\Models\Pps\TermMark;
+use App\Models\Pps\ComputedScore;
+use App\Models\Pps\Exam;
+use App\Models\Pps\ExamComponent;
+use App\Models\Pps\Mark;
 use App\Models\Student;
-use App\Services\Pps\GradeCalculatorService;
+use App\Services\Pps\ComputedScoreService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -16,165 +16,98 @@ use Illuminate\Support\Facades\DB;
 class ResultSummaryController extends Controller
 {
     public function __construct(
-        private readonly GradeCalculatorService $grader,
+        private readonly ComputedScoreService $scorer,
     ) {
     }
 
     /**
-     * GET /v1/pps/results/summary?exam_id=&class_name=&section=
+     * GET /v1/pps/results/summary?exam_id=
+     * Returns per-student aggregate rows from pps_computed_scores.
      */
     public function index(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'exam_id'      => ['required', 'exists:pps_exam_definitions,id'],
-            'letter_grade' => ['nullable', 'string', 'max:3'],
+            'exam_id' => ['required', 'exists:pps_exams,id'],
         ]);
 
-        $query = ResultSummary::query()
-            ->where('exam_id', $data['exam_id'])
-            ->with('student:id,name,roll_number,student_code,class_name,section')
-            ->orderBy('class_position');
+        $rows = DB::table('pps_computed_scores as cs')
+            ->join('students as s', 's.id', '=', 'cs.student_id')
+            ->where('cs.exam_id', $data['exam_id'])
+            ->groupBy('cs.student_id', 's.id', 's.name', 's.roll_number')
+            ->selectRaw(
+                'cs.student_id,
+                 s.name,
+                 s.roll_number,
+                 SUM(cs.total_obtained) as total_obtained,
+                 SUM(cs.total_possible) as total_possible,
+                 CASE WHEN SUM(cs.total_possible) > 0
+                      THEN ROUND(SUM(cs.total_obtained) / SUM(cs.total_possible) * 100, 2)
+                      ELSE 0 END as percentage'
+            )
+            ->orderBy('s.roll_number')
+            ->get();
 
-        if (! empty($data['letter_grade'])) {
-            $query->where('letter_grade', strtoupper(trim($data['letter_grade'])));
-        }
+        // Attach letter_grade and grade_point from the first computed score for that student
+        // (they share the same grading scale so we can derive from overall percentage)
+        $result = $rows->map(function ($row): array {
+            $pct = (float) $row->percentage;
+            [$grade, $gp] = $this->gradeFromPercentage($pct);
 
-        $summaries = $query->get();
+            return [
+                'student_id'     => $row->student_id,
+                'name'           => $row->name,
+                'roll_number'    => $row->roll_number,
+                'total_obtained' => round((float) $row->total_obtained, 2),
+                'total_possible' => round((float) $row->total_possible, 2),
+                'percentage'     => $pct,
+                'letter_grade'   => $grade,
+                'grade_point'    => $gp,
+            ];
+        });
 
-        return response()->json(['data' => $summaries]);
+        return response()->json(['data' => $result]);
     }
 
     /**
      * POST /v1/pps/results/compute
-     * Compute and store GPA + result summary for all students in an exam.
-     *
      * Body: { exam_id }
+     * Recomputes ComputedScore for every (student, subject) combo in the exam.
      */
     public function compute(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'exam_id' => ['required', 'exists:pps_exam_definitions,id'],
+            'exam_id' => ['required', 'exists:pps_exams,id'],
         ]);
 
-        $exam = ExamDefinition::query()->findOrFail($data['exam_id']);
-        $isPretest = str_contains(strtolower($exam->assessment_type ?? ''), 'pretest')
-            || (int) $exam->class_name >= 11;
+        $examId = (int) $data['exam_id'];
 
-        $query = Student::query()->where('class_name', $exam->class_name);
-        if ($exam->section !== null) {
-            $query->where('section', $exam->section);
-        }
-        $students = $query->pluck('id');
+        // Find all student+subject combos that have marks for this exam
+        $componentIds = ExamComponent::where('exam_id', $examId)->pluck('id');
 
-        $computedBy = $request->user()?->id;
-        $results = [];
-
-        DB::transaction(function () use ($data, $students, $isPretest, $computedBy, &$results): void {
-            foreach ($students as $studentId) {
-                $summary = $isPretest
-                    ? $this->computeFromPretest($data['exam_id'], $studentId)
-                    : $this->computeFromTermMarks($data['exam_id'], $studentId);
-
-                $record = ResultSummary::query()->updateOrCreate(
-                    ['exam_id' => $data['exam_id'], 'student_id' => $studentId],
-                    array_merge($summary, [
-                        'computed_at' => now(),
-                        'computed_by' => $computedBy,
-                    ])
-                );
-
-                $results[] = $record;
-            }
-
-            // Compute class positions based on total_marks_obtained descending
-            $this->updateClassPositions($data['exam_id'], count($students));
-        });
-
-        return response()->json(['computed' => count($results)]);
-    }
-
-    private function computeFromTermMarks(int $examId, int $studentId): array
-    {
-        $marks = TermMark::query()
-            ->where('exam_id', $examId)
-            ->where('student_id', $studentId)
+        $combos = Mark::whereIn('component_id', $componentIds)
+            ->select('student_id', 'subject_id')
+            ->distinct()
             ->get();
 
-        if ($marks->isEmpty()) {
-            return $this->emptyResult();
+        $count = 0;
+        foreach ($combos as $combo) {
+            $this->scorer->recompute($examId, $combo->student_id, $combo->subject_id);
+            $count++;
         }
 
-        $subjectData = $marks->map(fn (TermMark $m) => [
-            'grade_point' => $m->grade_point ?? 0.0,
-            'is_core'     => true, // all subjects treated as core unless flagged otherwise
-        ])->all();
-
-        $gpa   = $this->grader->calculateGpa($subjectData);
-        $total = $marks->sum('total_obtained');
-        $full  = $marks->count() * 100; // 100 per subject
-
-        $gradeResult = $full > 0 ? $this->grader->resolve(($total / $full) * 100) : ['letter_grade' => 'F', 'grade_point' => 0];
-
-        return [
-            'total_marks_obtained' => $total,
-            'total_marks_full'     => $full,
-            'gpa'                  => $gpa,
-            'letter_grade'         => $gradeResult['letter_grade'],
-        ];
+        return response()->json(['computed' => $count]);
     }
 
-    private function computeFromPretest(int $examId, int $studentId): array
+    private function gradeFromPercentage(float $pct): array
     {
-        $marks = PretestMark::query()
-            ->where('exam_id', $examId)
-            ->where('student_id', $studentId)
-            ->get();
-
-        if ($marks->isEmpty()) {
-            return $this->emptyResult();
-        }
-
-        $subjectData = $marks->map(fn (PretestMark $m) => [
-            'grade_point' => $m->grade_point ?? 0.0,
-            'is_core'     => true,
-        ])->all();
-
-        $gpa   = $this->grader->calculateGpa($subjectData);
-        $total = $marks->sum('total_obtained');
-        $full  = $marks->count() * 100;
-
-        $gradeResult = $full > 0 ? $this->grader->resolve(($total / $full) * 100) : ['letter_grade' => 'F', 'grade_point' => 0];
-
-        return [
-            'total_marks_obtained' => $total,
-            'total_marks_full'     => $full,
-            'gpa'                  => $gpa,
-            'letter_grade'         => $gradeResult['letter_grade'],
-        ];
-    }
-
-    private function updateClassPositions(int $examId, int $totalStudents): void
-    {
-        $rows = ResultSummary::query()
-            ->where('exam_id', $examId)
-            ->orderByDesc('total_marks_obtained')
-            ->pluck('id');
-
-        foreach ($rows as $rank => $id) {
-            ResultSummary::query()->where('id', $id)->update([
-                'class_position'          => $rank + 1,
-                'total_students_in_class' => $totalStudents,
-            ]);
-        }
-    }
-
-    private function emptyResult(): array
-    {
-        return [
-            'total_marks_obtained' => null,
-            'total_marks_full'     => null,
-            'gpa'                  => null,
-            'letter_grade'         => null,
-        ];
+        return match (true) {
+            $pct >= 80 => ['A+', 5.00],
+            $pct >= 70 => ['A',  4.00],
+            $pct >= 60 => ['A-', 3.50],
+            $pct >= 50 => ['B',  3.00],
+            $pct >= 40 => ['C',  2.00],
+            $pct >= 33 => ['D',  1.00],
+            default    => ['F',  0.00],
+        };
     }
 }

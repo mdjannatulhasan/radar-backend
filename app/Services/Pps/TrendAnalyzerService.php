@@ -2,7 +2,7 @@
 
 namespace App\Services\Pps;
 
-use App\Models\Pps\Assessment;
+use App\Models\Pps\ComputedScore;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -25,21 +25,23 @@ class TrendAnalyzerService
         };
     }
 
-    public function calcSubjectTrend(int $studentId, string $subject, string $currentPeriod): array
+    public function calcSubjectTrend(int $studentId, string $subjectName, string $currentPeriod): array
     {
         $periods = $this->getLastPeriods($currentPeriod, 6);
 
-        return Assessment::query()
-            ->where('student_id', $studentId)
-            ->where('subject', $subject)
-            ->whereIn(DB::raw("strftime('%Y-%m', exam_date)"), $periods)
-            ->groupBy(DB::raw("strftime('%Y-%m', exam_date)"))
-            ->selectRaw("strftime('%Y-%m', exam_date) as period, AVG(percentage) as avg_pct")
+        return ComputedScore::query()
+            ->join('pps_exams', 'pps_exams.id', '=', 'pps_computed_scores.exam_id')
+            ->join('pps_subjects', 'pps_subjects.id', '=', 'pps_computed_scores.subject_id')
+            ->where('pps_computed_scores.student_id', $studentId)
+            ->where('pps_subjects.name', $subjectName)
+            ->whereIn(DB::raw("to_char(pps_exams.exam_date, 'YYYY-MM')"), $periods)
+            ->groupBy(DB::raw("to_char(pps_exams.exam_date, 'YYYY-MM')"))
+            ->selectRaw("to_char(pps_exams.exam_date, 'YYYY-MM') as period, AVG(pps_computed_scores.percentage) as avg_pct")
             ->orderBy('period')
             ->get()
-            ->map(fn (Assessment $assessment) => [
-                'period' => $assessment->period,
-                'score' => round((float) $assessment->avg_pct, 1),
+            ->map(fn ($row) => [
+                'period' => $row->period,
+                'score'  => round((float) $row->avg_pct, 1),
             ])
             ->toArray();
     }
@@ -56,4 +58,3 @@ class TrendAnalyzerService
         return array_reverse($periods);
     }
 }
-

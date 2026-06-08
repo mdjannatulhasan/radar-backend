@@ -2,11 +2,12 @@
 
 namespace App\Services\Pps;
 
-use App\Models\Pps\ExamDefinition;
-use App\Models\Pps\PretestMark;
-use App\Models\Pps\ResultSummary;
-use App\Models\Pps\TermMark;
+use App\Models\Pps\ComputedScore;
+use App\Models\Pps\Exam;
+use App\Models\Pps\ExamComponent;
+use App\Models\Pps\Mark;
 use App\Models\Student;
+use Illuminate\Support\Facades\DB;
 use Mpdf\Mpdf;
 
 class ReportCardService
@@ -18,12 +19,9 @@ class ReportCardService
      */
     public function generate(int $studentId, int $examId): string
     {
-        $student = Student::query()->with('stream')->findOrFail($studentId);
-        $exam    = ExamDefinition::query()->findOrFail($examId);
-        $summary = ResultSummary::query()
-            ->where('exam_id', $examId)
-            ->where('student_id', $studentId)
-            ->first();
+        $student  = Student::query()->with('stream')->findOrFail($studentId);
+        $exam     = Exam::with(['examType', 'components'])->findOrFail($examId);
+        $summary  = $this->buildSummary($examId, $studentId);
 
         $classLevel = (int) $student->class_name;
 
@@ -35,91 +33,171 @@ class ReportCardService
     }
 
     /**
-     * Generate a tabulation sheet PDF for all students in an exam+class+section.
+     * Generate a tabulation sheet PDF for all students in an exam.
      *
      * @return string raw PDF bytes
      */
     public function generateTabulation(int $examId): string
     {
-        $exam = ExamDefinition::query()->findOrFail($examId);
-        $classLevel = (int) $exam->class_name;
+        $exam = Exam::with(['examType', 'components'])->findOrFail($examId);
 
+        // No class filter available on new Exam model — use ExamClassMap if needed
         $students = Student::query()
-            ->where('class_name', $exam->class_name)
-            ->where('section', $exam->section)
             ->orderBy('roll_number')
             ->get();
 
-        $html = $classLevel >= 11
+        $html = ($exam->examType?->code === 'pretest')
             ? $this->buildTabulationB($students, $exam)
             : $this->buildTabulationA($students, $exam);
 
         return $this->renderPdf($html, 'L');
     }
 
+    // ─── Aggregate summary from ComputedScores ───────────────────────────────
+
+    private function buildSummary(int $examId, int $studentId): array
+    {
+        $rows = ComputedScore::query()
+            ->where('exam_id', $examId)
+            ->where('student_id', $studentId)
+            ->get(['total_obtained', 'total_possible', 'percentage', 'letter_grade', 'grade_point']);
+
+        if ($rows->isEmpty()) {
+            return [];
+        }
+
+        $totalObtained = $rows->sum('total_obtained');
+        $totalPossible = $rows->sum('total_possible');
+        $pct = $totalPossible > 0 ? round($totalObtained / $totalPossible * 100, 2) : 0;
+        [$grade, $gp] = $this->gradeFromPercentage($pct);
+
+        return [
+            'total_marks_obtained' => $totalObtained,
+            'total_marks_full'     => $totalPossible,
+            'percentage'           => $pct,
+            'gpa'                  => $gp,
+            'letter_grade'         => $grade,
+            'class_position'       => null,
+            'total_students_in_class' => null,
+            'is_promoted'          => null,
+            'discipline'           => null,
+            'handwriting'          => null,
+            'total_working_days'   => null,
+            'total_presence'       => null,
+        ];
+    }
+
+    // ─── Per-student marks keyed by [subject_id][component_code] ────────────
+
+    private function loadMarksBySubjectComponent(int $examId, int $studentId): array
+    {
+        $components = ExamComponent::where('exam_id', $examId)
+            ->get(['id', 'code'])
+            ->keyBy('id');
+
+        $marks = Mark::whereIn('component_id', $components->keys())
+            ->where('student_id', $studentId)
+            ->get(['component_id', 'subject_id', 'marks_obtained']);
+
+        $map = [];
+        foreach ($marks as $m) {
+            $code = $components->get($m->component_id)?->code ?? 'unknown';
+            $map[$m->subject_id][$code] = $m->marks_obtained;
+        }
+        return $map;
+    }
+
+    // Load all marks for an exam (all students), grouped by student_id → subject_id → code
+    private function loadAllMarksByStudentSubjectComponent(int $examId): array
+    {
+        $components = ExamComponent::where('exam_id', $examId)
+            ->get(['id', 'code'])
+            ->keyBy('id');
+
+        $marks = Mark::whereIn('component_id', $components->keys())
+            ->get(['component_id', 'student_id', 'subject_id', 'marks_obtained']);
+
+        $map = [];
+        foreach ($marks as $m) {
+            $code = $components->get($m->component_id)?->code ?? 'unknown';
+            $map[$m->student_id][$m->subject_id][$code] = $m->marks_obtained;
+        }
+        return $map;
+    }
+
     // ─── Format A — Classes 4–10 ─────────────────────────────────────────────
 
-    private function buildFormatA(Student $student, ExamDefinition $exam, ?ResultSummary $summary): string
+    private function buildFormatA(Student $student, Exam $exam, array $summary): string
     {
-        $marks = TermMark::query()
+        $marksBySubjectCode = $this->loadMarksBySubjectComponent($exam->id, $student->id);
+        $computedScores = ComputedScore::query()
             ->where('exam_id', $exam->id)
             ->where('student_id', $student->id)
-            ->with('subject')
+            ->with('subject:id,name')
             ->orderBy('subject_id')
             ->get();
 
-        $isSecondTerm = str_contains(strtolower($exam->term ?? ''), '2nd')
+        $isSecondTerm = $exam->term === 2
             || str_contains(strtolower($exam->title ?? ''), '2nd')
-            || str_contains(strtolower($exam->assessment_type ?? ''), 'annual');
+            || str_contains(strtolower($exam->examType?->code ?? ''), 'annual');
 
-        // Build subject rows
         $subjectRows = '';
-        foreach ($marks as $i => $m) {
+        foreach ($computedScores as $i => $cs) {
             $bg = ($i % 2 === 0) ? '#ffffff' : '#f5f7fb';
-            $subjectName = htmlspecialchars($m->subject->name ?? '');
+            $subjectName = htmlspecialchars($cs->subject?->name ?? '');
+            $subjectId   = $cs->subject_id;
+            $codes       = $marksBySubjectCode[$subjectId] ?? [];
+
+            $spotTest     = $this->fmtVal($codes['spot_test']     ?? $codes['ST']      ?? null);
+            $spotTestCon  = $this->fmtVal($codes['spot_test_con'] ?? $codes['ST_CON']  ?? null);
+            $ct2          = $this->fmtVal($codes['class_test2']   ?? $codes['CT2']     ?? $codes['class_test'] ?? null);
+            $ct2Con       = $this->fmtVal($codes['class_test2_con'] ?? $codes['CT2_CON'] ?? null);
+            $attendance   = $this->fmtVal($codes['attendance']    ?? $codes['ATT']     ?? null);
+            $termMarks    = $this->fmtVal($codes['term_marks']    ?? $codes['TERM']    ?? null);
+            $termCon      = $this->fmtVal($codes['term_con']      ?? $codes['TERM_CON'] ?? null);
 
             if ($isSecondTerm) {
-                $vtRaw = $this->fmt($m->vt);
-                $vtCon = $this->fmt($m->vt_con);
-                $vtCells = "<td style='background:{$bg}'>{$vtRaw}</td><td style='background:{$bg}'>{$vtCon}</td>";
+                $vt     = $this->fmtVal($codes['vt']     ?? $codes['VT']     ?? null);
+                $vtCon  = $this->fmtVal($codes['vt_con'] ?? $codes['VT_CON'] ?? null);
+                $vtCells = "<td style='background:{$bg}'>{$vt}</td><td style='background:{$bg}'>{$vtCon}</td>";
             } else {
                 $vtCells = "<td style='background:{$bg}'>—</td><td style='background:{$bg}'>—</td>";
             }
 
-            $gradeColor = $this->gradeColor($m->letter_grade);
+            $gradeColor = $this->gradeColor($cs->letter_grade);
 
             $subjectRows .= "
             <tr>
                 <td style='text-align:left;padding-left:6px;background:{$bg}'>{$subjectName}</td>
-                <td style='background:{$bg}'>{$this->fmt($m->spot_test)}</td>
-                <td style='background:{$bg}'>{$this->fmt($m->spot_test_con)}</td>
-                <td style='background:{$bg}'>{$this->fmt($m->class_test2)}</td>
-                <td style='background:{$bg}'>{$this->fmt($m->class_test2_con)}</td>
-                <td style='background:{$bg}'>{$this->fmt($m->attendance)}</td>
-                <td style='background:{$bg}'>{$this->fmt($m->term_marks)}</td>
-                <td style='background:{$bg}'>{$this->fmt($m->term_con)}</td>
+                <td style='background:{$bg}'>{$spotTest}</td>
+                <td style='background:{$bg}'>{$spotTestCon}</td>
+                <td style='background:{$bg}'>{$ct2}</td>
+                <td style='background:{$bg}'>{$ct2Con}</td>
+                <td style='background:{$bg}'>{$attendance}</td>
+                <td style='background:{$bg}'>{$termMarks}</td>
+                <td style='background:{$bg}'>{$termCon}</td>
                 {$vtCells}
-                <td style='font-weight:bold;background:{$bg}'>{$this->fmt($m->total_obtained)}</td>
-                <td style='font-weight:bold;color:{$gradeColor};background:{$bg}'>{$m->letter_grade}</td>
-                <td style='background:{$bg}'>{$this->fmt($m->highest_marks)}</td>
+                <td style='font-weight:bold;background:{$bg}'>{$this->fmt($cs->total_obtained)}</td>
+                <td style='font-weight:bold;color:{$gradeColor};background:{$bg}'>{$cs->letter_grade}</td>
+                <td style='background:{$bg}'>—</td>
             </tr>";
         }
 
-        $promotionText = $summary?->is_promoted === true ? 'Promoted' : ($summary?->is_promoted === false ? 'Not Promoted' : '—');
-        $promotionColor = $summary?->is_promoted === true ? '#166534' : ($summary?->is_promoted === false ? '#991b1b' : '#555');
-        $totalObtained  = $this->fmt($summary?->total_marks_obtained);
-        $totalFull      = $this->fmt($summary?->total_marks_full);
-        $gpa            = $this->fmt($summary?->gpa);
-        $letterGrade    = $summary?->letter_grade     ?? '—';
-        $classPos       = $summary?->class_position   ?? '—';
-        $totalStudents  = $summary?->total_students_in_class ?? '—';
-        $discipline     = $summary?->discipline       ?? '—';
-        $handwriting    = $summary?->handwriting      ?? '—';
-        $workingDays    = $summary?->total_working_days ?? '—';
-        $presence       = $summary?->total_presence   ?? '—';
-        $gpaColor       = $this->gpaColor((float)($summary?->gpa ?? 0));
-        $stream         = htmlspecialchars($student->stream?->name ?? '—');
-        $examYear       = $exam->exam_date?->format('Y') ?? date('Y');
+        $promotionText  = $summary['is_promoted'] === true ? 'Promoted' : ($summary['is_promoted'] === false ? 'Not Promoted' : '—');
+        $promotionColor = $summary['is_promoted'] === true ? '#166534' : ($summary['is_promoted'] === false ? '#991b1b' : '#555');
+        $totalObtained  = $this->fmt($summary['total_marks_obtained'] ?? null);
+        $totalFull      = $this->fmt($summary['total_marks_full']     ?? null);
+        $gpa            = $this->fmt($summary['gpa']                  ?? null);
+        $letterGrade    = $summary['letter_grade']                    ?? '—';
+        $classPos       = $summary['class_position']                  ?? '—';
+        $totalStudents  = $summary['total_students_in_class']         ?? '—';
+        $discipline     = $summary['discipline']                      ?? '—';
+        $handwriting    = $summary['handwriting']                     ?? '—';
+        $workingDays    = $summary['total_working_days']              ?? '—';
+        $presence       = $summary['total_presence']                  ?? '—';
+        $gpaColor       = $this->gpaColor((float) ($summary['gpa']    ?? 0));
+        $stream         = htmlspecialchars($student->stream?->name    ?? '—');
+        $examYear       = isset($exam->exam_date) ? date('Y', strtotime($exam->exam_date)) : date('Y');
         $examTitle      = htmlspecialchars($exam->title ?? '');
 
         $vtHeaderSpan = $isSecondTerm
@@ -204,49 +282,57 @@ class ReportCardService
 
     // ─── Format B — Class 11–12 (Pre-Test) ───────────────────────────────────
 
-    private function buildFormatB(Student $student, ExamDefinition $exam, ?ResultSummary $summary): string
+    private function buildFormatB(Student $student, Exam $exam, array $summary): string
     {
-        $marks = PretestMark::query()
+        $marksBySubjectCode = $this->loadMarksBySubjectComponent($exam->id, $student->id);
+        $computedScores = ComputedScore::query()
             ->where('exam_id', $exam->id)
             ->where('student_id', $student->id)
-            ->with('subject')
+            ->with('subject:id,name')
             ->orderBy('subject_id')
             ->get();
 
         $subjectRows = '';
-        foreach ($marks as $i => $m) {
-            $bg = ($i % 2 === 0) ? '#ffffff' : '#f5f7fb';
-            $subjectName = htmlspecialchars($m->subject->name ?? '');
-            $promoGrade  = $m->promotion_grade ?? '—';
-            $gradeColor  = $this->gradeColor($m->letter_grade);
+        foreach ($computedScores as $i => $cs) {
+            $bg          = ($i % 2 === 0) ? '#ffffff' : '#f5f7fb';
+            $subjectName = htmlspecialchars($cs->subject?->name ?? '');
+            $codes       = $marksBySubjectCode[$cs->subject_id] ?? [];
+            $gradeColor  = $this->gradeColor($cs->letter_grade);
+
+            $ct         = $this->fmtVal($codes['ct']      ?? $codes['CT']      ?? null);
+            $attendance = $this->fmtVal($codes['attendance'] ?? $codes['ATT']  ?? null);
+            $cq         = $this->fmtVal($codes['cq']      ?? $codes['CQ']      ?? null);
+            $cqCon      = $this->fmtVal($codes['cq_con']  ?? $codes['CQ_CON']  ?? null);
+            $mcq        = $this->fmtVal($codes['mcq']     ?? $codes['MCQ']     ?? null);
+            $mcqCon     = $this->fmtVal($codes['mcq_con'] ?? $codes['MCQ_CON'] ?? null);
 
             $subjectRows .= "
             <tr>
                 <td style='text-align:left;padding-left:6px;background:{$bg}'>{$subjectName}</td>
-                <td style='background:{$bg}'>{$this->fmt($m->ct)}</td>
-                <td style='background:{$bg}'>{$this->fmt($m->attendance)}</td>
-                <td style='background:{$bg}'>{$this->fmt($m->cq)}</td>
-                <td style='background:{$bg}'>{$this->fmt($m->cq_con)}</td>
-                <td style='background:{$bg}'>{$this->fmt($m->mcq)}</td>
-                <td style='background:{$bg}'>{$this->fmt($m->mcq_con)}</td>
-                <td style='font-weight:bold;background:{$bg}'>{$this->fmt($m->total_obtained)}</td>
-                <td style='font-weight:bold;color:{$gradeColor};background:{$bg}'>{$m->letter_grade}</td>
-                <td style='background:{$bg}'>{$this->fmt($m->grade_point)}</td>
-                <td style='background:{$bg}'>{$this->fmt($m->highest_marks)}</td>
-                <td style='background:{$bg}'>{$promoGrade}</td>
+                <td style='background:{$bg}'>{$ct}</td>
+                <td style='background:{$bg}'>{$attendance}</td>
+                <td style='background:{$bg}'>{$cq}</td>
+                <td style='background:{$bg}'>{$cqCon}</td>
+                <td style='background:{$bg}'>{$mcq}</td>
+                <td style='background:{$bg}'>{$mcqCon}</td>
+                <td style='font-weight:bold;background:{$bg}'>{$this->fmt($cs->total_obtained)}</td>
+                <td style='font-weight:bold;color:{$gradeColor};background:{$bg}'>{$cs->letter_grade}</td>
+                <td style='background:{$bg}'>{$this->fmt($cs->grade_point)}</td>
+                <td style='background:{$bg}'>—</td>
+                <td style='background:{$bg}'>—</td>
             </tr>";
         }
 
-        $bTotal    = $this->fmt($summary?->total_marks_obtained);
-        $bGpa      = $this->fmt($summary?->gpa);
-        $bGrade    = $summary?->letter_grade ?? '—';
-        $bStudents = $summary?->total_students_in_class ?? '—';
-        $bPos      = $summary?->class_position ?? '—';
-        $promotionText  = $summary?->is_promoted === true ? 'Promoted' : ($summary?->is_promoted === false ? 'Not Promoted' : '—');
-        $promotionColor = $summary?->is_promoted === true ? '#166534' : ($summary?->is_promoted === false ? '#991b1b' : '#555');
-        $gpaColor       = $this->gpaColor((float)($summary?->gpa ?? 0));
+        $bTotal    = $this->fmt($summary['total_marks_obtained'] ?? null);
+        $bGpa      = $this->fmt($summary['gpa']                  ?? null);
+        $bGrade    = $summary['letter_grade']                    ?? '—';
+        $bStudents = $summary['total_students_in_class']         ?? '—';
+        $bPos      = $summary['class_position']                  ?? '—';
+        $promotionText  = $summary['is_promoted'] === true ? 'Promoted' : ($summary['is_promoted'] === false ? 'Not Promoted' : '—');
+        $promotionColor = $summary['is_promoted'] === true ? '#166534' : ($summary['is_promoted'] === false ? '#991b1b' : '#555');
+        $gpaColor       = $this->gpaColor((float) ($summary['gpa'] ?? 0));
         $stream         = htmlspecialchars($student->stream?->name ?? '—');
-        $examYear       = $exam->exam_date?->format('Y') ?? date('Y');
+        $examYear       = isset($exam->exam_date) ? date('Y', strtotime($exam->exam_date)) : date('Y');
         $examTitle      = htmlspecialchars($exam->title ?? '');
 
         return $this->wrapHtml("
@@ -309,37 +395,40 @@ class ReportCardService
 
     // ─── Tabulation sheets ────────────────────────────────────────────────────
 
-    private function buildTabulationA($students, ExamDefinition $exam): string
+    private function buildTabulationA($students, Exam $exam): string
     {
-        $allMarks = TermMark::query()
-            ->where('exam_id', $exam->id)
-            ->with('subject')
-            ->get()
-            ->groupBy('student_id');
+        $allMarks = $this->loadAllMarksByStudentSubjectComponent($exam->id);
 
-        $subjects = TermMark::query()
+        // Get distinct subjects from computed scores
+        $subjectRows = ComputedScore::query()
             ->where('exam_id', $exam->id)
-            ->with('subject')
+            ->with('subject:id,name')
             ->get()
             ->unique('subject_id')
             ->sortBy('subject_id')
             ->values();
 
-        $subjectHeaders = $subjects->map(fn ($m) => "<th>" . htmlspecialchars($m->subject->name ?? '') . "</th>")->implode('');
+        $subjectHeaders = $subjectRows->map(fn ($cs) => "<th>" . htmlspecialchars($cs->subject?->name ?? '') . "</th>")->implode('');
 
         $rows = '';
         foreach ($students as $i => $student) {
             $bg = ($i % 2 === 0) ? '#ffffff' : '#f5f7fb';
-            $studentMarks = ($allMarks[$student->id] ?? collect())->keyBy('subject_id');
-            $cells = $subjects->map(function ($m) use ($studentMarks, $bg) {
-                $val = $this->fmt($studentMarks->get($m->subject_id)?->total_obtained);
+            $studentScores = ComputedScore::query()
+                ->where('exam_id', $exam->id)
+                ->where('student_id', $student->id)
+                ->get()
+                ->keyBy('subject_id');
+
+            $cells = $subjectRows->map(function ($cs) use ($studentScores, $bg) {
+                $val = $this->fmt($studentScores->get($cs->subject_id)?->total_obtained);
                 return "<td style='background:{$bg}'>{$val}</td>";
             })->implode('');
-            $summary  = ResultSummary::query()->where('exam_id', $exam->id)->where('student_id', $student->id)->first();
-            $tTotal   = $this->fmt($summary?->total_marks_obtained);
-            $tGpa     = $this->fmt($summary?->gpa);
-            $tGrade   = $summary?->letter_grade  ?? '—';
-            $tPos     = $summary?->class_position ?? '—';
+
+            $summary  = $this->buildSummary($exam->id, $student->id);
+            $tTotal   = $this->fmt($summary['total_marks_obtained'] ?? null);
+            $tGpa     = $this->fmt($summary['gpa']                  ?? null);
+            $tGrade   = $summary['letter_grade']                    ?? '—';
+            $tPos     = $summary['class_position']                  ?? '—';
             $gColor   = $this->gradeColor($tGrade);
 
             $rows .= "<tr>
@@ -353,13 +442,13 @@ class ReportCardService
             </tr>";
         }
 
-        $year = $exam->exam_date?->format('Y') ?? date('Y');
+        $year = isset($exam->exam_date) ? date('Y', strtotime($exam->exam_date)) : date('Y');
 
         return $this->wrapHtml("
         <div style='text-align:center;border-bottom:2px solid #1a3a5c;padding-bottom:6px;margin-bottom:8px'>
             <div style='font-size:15pt;font-weight:bold;color:#1a3a5c'>Cantonment Public School &amp; College, Saidpur</div>
             <div style='font-size:11pt;font-weight:bold;margin-top:2px'>Tabulation Sheet — {$year}</div>
-            <div style='font-size:9pt;color:#444;margin-top:2px'>Class {$exam->class_name} — Section {$exam->section} — " . htmlspecialchars($exam->title) . "</div>
+            <div style='font-size:9pt;color:#444;margin-top:2px'>" . htmlspecialchars($exam->title) . "</div>
         </div>
         <table class='marks-table tabulation'>
             <thead>
@@ -375,37 +464,37 @@ class ReportCardService
         ");
     }
 
-    private function buildTabulationB($students, ExamDefinition $exam): string
+    private function buildTabulationB($students, Exam $exam): string
     {
-        $allMarks = PretestMark::query()
+        $subjectRows = ComputedScore::query()
             ->where('exam_id', $exam->id)
-            ->with('subject')
-            ->get()
-            ->groupBy('student_id');
-
-        $subjects = PretestMark::query()
-            ->where('exam_id', $exam->id)
-            ->with('subject')
+            ->with('subject:id,name')
             ->get()
             ->unique('subject_id')
             ->sortBy('subject_id')
             ->values();
 
-        $subjectHeaders = $subjects->map(fn ($m) => "<th>" . htmlspecialchars($m->subject->name ?? '') . "</th>")->implode('');
+        $subjectHeaders = $subjectRows->map(fn ($cs) => "<th>" . htmlspecialchars($cs->subject?->name ?? '') . "</th>")->implode('');
 
         $rows = '';
         foreach ($students as $i => $student) {
             $bg = ($i % 2 === 0) ? '#ffffff' : '#f5f7fb';
-            $studentMarks = ($allMarks[$student->id] ?? collect())->keyBy('subject_id');
-            $cells = $subjects->map(function ($m) use ($studentMarks, $bg) {
-                $val = $this->fmt($studentMarks->get($m->subject_id)?->total_obtained);
+            $studentScores = ComputedScore::query()
+                ->where('exam_id', $exam->id)
+                ->where('student_id', $student->id)
+                ->get()
+                ->keyBy('subject_id');
+
+            $cells = $subjectRows->map(function ($cs) use ($studentScores, $bg) {
+                $val = $this->fmt($studentScores->get($cs->subject_id)?->total_obtained);
                 return "<td style='background:{$bg}'>{$val}</td>";
             })->implode('');
-            $summary  = ResultSummary::query()->where('exam_id', $exam->id)->where('student_id', $student->id)->first();
-            $bTotal   = $this->fmt($summary?->total_marks_obtained);
-            $bGpa     = $this->fmt($summary?->gpa);
-            $bGrade   = $summary?->letter_grade ?? '—';
-            $gColor   = $this->gradeColor($bGrade);
+
+            $summary = $this->buildSummary($exam->id, $student->id);
+            $bTotal  = $this->fmt($summary['total_marks_obtained'] ?? null);
+            $bGpa    = $this->fmt($summary['gpa']                  ?? null);
+            $bGrade  = $summary['letter_grade']                    ?? '—';
+            $gColor  = $this->gradeColor($bGrade);
 
             $rows .= "<tr>
                 <td style='background:{$bg};text-align:center'>{$student->roll_number}</td>
@@ -417,13 +506,13 @@ class ReportCardService
             </tr>";
         }
 
-        $year = $exam->exam_date?->format('Y') ?? date('Y');
+        $year = isset($exam->exam_date) ? date('Y', strtotime($exam->exam_date)) : date('Y');
 
         return $this->wrapHtml("
         <div style='text-align:center;border-bottom:2px solid #1a3a5c;padding-bottom:6px;margin-bottom:8px'>
             <div style='font-size:15pt;font-weight:bold;color:#1a3a5c'>Cantonment Public School &amp; College, Saidpur</div>
             <div style='font-size:11pt;font-weight:bold;margin-top:2px'>Tabulation Sheet — {$year}</div>
-            <div style='font-size:9pt;color:#444;margin-top:2px'>Class {$exam->class_name} — Section {$exam->section} — " . htmlspecialchars($exam->title) . "</div>
+            <div style='font-size:9pt;color:#444;margin-top:2px'>" . htmlspecialchars($exam->title) . "</div>
         </div>
         <table class='marks-table tabulation'>
             <thead>
@@ -459,7 +548,7 @@ class ReportCardService
         </table>";
     }
 
-    private function studentInfoTable(Student $student, ExamDefinition $exam, string $stream): string
+    private function studentInfoTable(Student $student, Exam $exam, string $stream): string
     {
         $name    = htmlspecialchars($student->name ?? '');
         $code    = htmlspecialchars($student->student_code ?? '');
@@ -575,6 +664,28 @@ class ReportCardService
             return '—';
         }
         return $value == (int) $value ? (string) (int) $value : number_format($value, 2);
+    }
+
+    private function fmtVal(mixed $value): string
+    {
+        if ($value === null) {
+            return '—';
+        }
+        $f = (float) $value;
+        return $f == (int) $f ? (string) (int) $f : number_format($f, 2);
+    }
+
+    private function gradeFromPercentage(float $pct): array
+    {
+        return match (true) {
+            $pct >= 80 => ['A+', 5.00],
+            $pct >= 70 => ['A',  4.00],
+            $pct >= 60 => ['A-', 3.50],
+            $pct >= 50 => ['B',  3.00],
+            $pct >= 40 => ['C',  2.00],
+            $pct >= 33 => ['D',  1.00],
+            default    => ['F',  0.00],
+        ];
     }
 
     private function wrapHtml(string $body): string

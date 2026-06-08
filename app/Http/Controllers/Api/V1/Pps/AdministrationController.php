@@ -3,21 +3,20 @@
 namespace App\Http\Controllers\Api\V1\Pps;
 
 use App\Http\Controllers\Controller;
-use App\Models\Pps\Assessment;
 use App\Models\Pps\ClassConfig;
 use App\Models\Pps\ClassSection;
+use App\Models\Pps\ComputedScore;
 use App\Models\Pps\Department;
+use App\Models\Pps\Exam;
+use App\Models\Pps\ExamClassMap;
+use App\Models\Pps\ExamComponent;
+use App\Models\Pps\GradeConfig;
+use App\Models\Pps\Mark;
 use App\Models\Pps\SchoolClass;
 use App\Models\Pps\Section;
-use App\Models\Pps\ExamDefinition;
-use App\Models\Pps\ExamScope;
-use App\Models\Pps\GradeConfig;
-use App\Models\Pps\PretestMark;
-use App\Models\Pps\ResultSummary;
 use App\Models\Pps\Stream;
 use App\Models\Pps\Subject;
 use App\Models\Pps\TeacherAssignment;
-use App\Models\Pps\TermMark;
 use App\Models\Student;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
@@ -29,8 +28,6 @@ use Symfony\Component\HttpFoundation\Response;
 
 class AdministrationController extends Controller
 {
-    private const ASSESSMENT_TYPES = ['class_test', 'assessment_test', 'quiz', 'spot_test', 'mid_term', 'final', 'assignment', 'practical'];
-
     public function overview(): JsonResponse
     {
         return response()->json([
@@ -40,7 +37,7 @@ class AdministrationController extends Controller
                 'classes' => SchoolClass::query()->count(),
                 'sections' => Section::query()->count(),
                 'subjects' => Subject::query()->count(),
-                'exams' => ExamDefinition::query()->count(),
+                'exams' => Exam::query()->count(),
                 'students' => Student::query()->count(),
                 'teachers' => User::query()->where('role', 'teacher')->count(),
                 'teacher_assignments' => TeacherAssignment::query()->count(),
@@ -72,8 +69,8 @@ class AdministrationController extends Controller
                 ->with('department:id,name,code')
                 ->orderBy('name')
                 ->get(),
-            'exams' => ExamDefinition::query()
-                ->with('scopes.subject:id,name,code', 'scopes.department:id,name,code')
+            'exams' => Exam::query()
+                ->with('examType:id,code,name', 'components', 'classMaps')
                 ->orderByDesc('exam_date')
                 ->orderBy('title')
                 ->get(),
@@ -121,7 +118,7 @@ class AdministrationController extends Controller
         if (
             $department->classSections()->exists()
             || $department->subjects()->exists()
-            || ExamDefinition::query()->where('department_id', $department->id)->exists()
+            || Exam::query()->where('scope', 'like', '%"department_id":' . $department->id . '%')->exists()
         ) {
             return response()->json([
                 'message' => 'This department is still linked to classes, subjects, or exams.',
@@ -157,7 +154,7 @@ class AdministrationController extends Controller
         if (
             Student::query()->where('class_name', $classSection->class_name)->where('section', $classSection->section)->exists()
             || TeacherAssignment::query()->where('class_name', $classSection->class_name)->where('section', $classSection->section)->exists()
-            || ExamDefinition::query()->where('class_name', $classSection->class_name)->where('section', $classSection->section)->exists()
+            || ExamClassMap::query()->where('class_name', $classSection->class_name)->where('section', $classSection->section)->exists()
         ) {
             return response()->json([
                 'message' => 'This class section still has students, assignments, or exam links.',
@@ -191,9 +188,9 @@ class AdministrationController extends Controller
     public function destroySubject(Subject $subject): JsonResponse
     {
         if (
-            ExamDefinition::query()->where('subject_id', $subject->id)->exists()
+            ExamComponent::query()->whereHas('exam', fn ($q) => $q->whereNotNull('id'))->whereHas('marks', fn ($q) => $q->where('subject_id', $subject->id))->exists()
+            || Mark::query()->where('subject_id', $subject->id)->exists()
             || TeacherAssignment::query()->where('subject', $subject->name)->exists()
-            || Assessment::query()->where('subject', $subject->name)->exists()
         ) {
             return response()->json([
                 'message' => 'This subject is already in use in assignments, exams, or assessment history.',
@@ -208,95 +205,43 @@ class AdministrationController extends Controller
     public function storeExam(Request $request): JsonResponse
     {
         $data = $request->validate($this->examRules());
-        $scopes = $data['scopes'] ?? [];
-        unset($data['scopes']);
 
-        return DB::transaction(function () use ($data, $scopes): JsonResponse {
-            $exam = ExamDefinition::query()->create($data);
-
-            foreach ($scopes as $scope) {
-                $exam->scopes()->create([
-                    'class_name'    => $scope['class_name'] ?? null,
-                    'section'       => $scope['section'] ?? null,
-                    'subject_id'    => $scope['subject_id'] ?? null,
-                    'department_id' => $scope['department_id'] ?? null,
-                ]);
-            }
+        return DB::transaction(function () use ($data): JsonResponse {
+            $exam = Exam::query()->create($data);
 
             return response()->json([
-                'exam' => $exam->load('scopes.subject:id,name,code', 'scopes.department:id,name,code'),
+                'exam' => $exam->load('examType:id,code,name', 'components', 'classMaps'),
             ], Response::HTTP_CREATED);
         });
     }
 
-    public function updateExam(Request $request, ExamDefinition $exam): JsonResponse
+    public function updateExam(Request $request, Exam $exam): JsonResponse
     {
         $data = $request->validate($this->examRules($exam));
-        $scopes = $data['scopes'] ?? null;
-        unset($data['scopes']);
 
-        return DB::transaction(function () use ($data, $scopes, $exam): JsonResponse {
+        return DB::transaction(function () use ($data, $exam): JsonResponse {
             $exam->update($data);
 
-            if ($scopes !== null) {
-                $exam->scopes()->delete();
-                foreach ($scopes as $scope) {
-                    $exam->scopes()->create([
-                        'class_name'    => $scope['class_name'] ?? null,
-                        'section'       => $scope['section'] ?? null,
-                        'subject_id'    => $scope['subject_id'] ?? null,
-                        'department_id' => $scope['department_id'] ?? null,
-                    ]);
-                }
-            }
-
             return response()->json([
-                'exam' => $exam->fresh()->load('scopes.subject:id,name,code', 'scopes.department:id,name,code'),
+                'exam' => $exam->fresh()->load('examType:id,code,name', 'components', 'classMaps'),
             ]);
         });
     }
 
-    public function destroyExam(ExamDefinition $exam): JsonResponse
+    public function destroyExam(Exam $exam): JsonResponse
     {
         if (
-            TermMark::query()->where('exam_id', $exam->id)->exists()
-            || PretestMark::query()->where('exam_id', $exam->id)->exists()
-            || ResultSummary::query()->where('exam_id', $exam->id)->exists()
+            Mark::query()->whereIn('component_id', $exam->components()->pluck('id'))->exists()
+            || ComputedScore::query()->where('exam_id', $exam->id)->exists()
         ) {
             return response()->json([
                 'message' => 'This exam already has marks submitted. Delete all marks before removing the exam.',
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        $exam->scopes()->delete();
+        $exam->components()->delete();
+        $exam->classMaps()->delete();
         $exam->delete();
-
-        return response()->json(['deleted' => true]);
-    }
-
-    public function storeExamScope(Request $request, ExamDefinition $exam): JsonResponse
-    {
-        $data = $request->validate([
-            'class_name'    => ['nullable', 'string', 'max:20'],
-            'section'       => ['nullable', 'string', 'max:10'],
-            'subject_id'    => ['nullable', 'exists:pps_subjects,id'],
-            'department_id' => ['nullable', 'exists:pps_departments,id'],
-        ]);
-
-        $scope = $exam->scopes()->create($data);
-
-        return response()->json([
-            'scope' => $scope->load('subject:id,name,code', 'department:id,name,code'),
-        ], Response::HTTP_CREATED);
-    }
-
-    public function destroyExamScope(ExamDefinition $exam, ExamScope $scope): JsonResponse
-    {
-        if ($scope->exam_id !== $exam->id) {
-            return response()->json(['message' => 'Scope does not belong to this exam.'], Response::HTTP_UNPROCESSABLE_ENTITY);
-        }
-
-        $scope->delete();
 
         return response()->json(['deleted' => true]);
     }
@@ -370,9 +315,8 @@ class AdministrationController extends Controller
     public function destroyStudent(Student $student): JsonResponse
     {
         if (
-            TermMark::query()->where('student_id', $student->id)->exists()
-            || PretestMark::query()->where('student_id', $student->id)->exists()
-            || ResultSummary::query()->where('student_id', $student->id)->exists()
+            Mark::query()->where('student_id', $student->id)->exists()
+            || ComputedScore::query()->where('student_id', $student->id)->exists()
         ) {
             return response()->json([
                 'message' => 'This student has submitted marks. Remove all marks before deleting the student.',
@@ -524,26 +468,17 @@ class AdministrationController extends Controller
         ];
     }
 
-    private function examRules(?ExamDefinition $exam = null): array
+    private function examRules(?Exam $exam = null): array
     {
         return [
-            'title' => ['required', 'string', 'max:255'],
-            'code' => [
-                'nullable',
-                'string',
-                'max:40',
-                Rule::unique('pps_exam_definitions', 'code')->ignore($exam?->id),
-            ],
-            'assessment_type'              => ['required', Rule::in(self::ASSESSMENT_TYPES)],
-            'term'                         => ['nullable', 'string', 'max:30'],
-            'total_marks'                  => ['required', 'numeric', 'gt:0'],
-            'exam_date'                    => ['nullable', 'date'],
-            'is_active'                    => ['sometimes', 'boolean'],
-            'scopes'                       => ['sometimes', 'array'],
-            'scopes.*.class_name'          => ['nullable', 'string', 'max:20'],
-            'scopes.*.section'             => ['nullable', 'string', 'max:10'],
-            'scopes.*.subject_id'          => ['nullable', 'exists:pps_subjects,id'],
-            'scopes.*.department_id'       => ['nullable', 'exists:pps_departments,id'],
+            'title'        => ['required', 'string', 'max:255'],
+            'exam_type_id' => ['required', 'exists:pps_exam_types,id'],
+            'academic_year'=> ['required', 'integer', 'min:2000', 'max:2100'],
+            'term'         => ['nullable', 'integer'],
+            'exam_date'    => ['nullable', 'date'],
+            'scope'        => ['nullable', 'string', 'max:50'],
+            'is_active'    => ['sometimes', 'boolean'],
+            'status'       => ['sometimes', 'string', 'max:30'],
         ];
     }
 
@@ -888,107 +823,16 @@ class AdministrationController extends Controller
     /**
      * POST /admin/bulk/marks
      *
-     * CSV columns: student_code, exam_id, subject, spot_test, class_test2, attendance, term_marks, vt
-     * Resolves student_id by student_code, subject_id by subject name/code.
-     * Upserts into pps_term_marks (same logic as TermMarksController@bulkStore but without con calculation).
+     * CSV bulk marks import.
+     *
+     * TODO: Reimplement for new schema (pps_marks via component codes).
+     * The old CSV format (spot_test, class_test2, etc.) mapped to pps_term_marks columns
+     * which no longer exist. New format must supply component_id or component code per row.
      */
     public function bulkMarks(Request $request): JsonResponse
     {
-        $data = $request->validate([
-            'rows'                   => ['required', 'array', 'min:1'],
-            'rows.*.student_code'    => ['required', 'string'],
-            'rows.*.exam_id'         => ['required', 'integer', 'exists:pps_exam_definitions,id'],
-            'rows.*.subject'         => ['required', 'string'],
-            'rows.*.spot_test'       => ['nullable', 'numeric', 'min:0', 'max:10'],
-            'rows.*.class_test2'     => ['nullable', 'numeric', 'min:0', 'max:20'],
-            'rows.*.attendance'      => ['nullable', 'numeric', 'min:0', 'max:5'],
-            'rows.*.term_marks'      => ['nullable', 'numeric', 'min:0', 'max:100'],
-            'rows.*.vt'              => ['nullable', 'numeric', 'min:0', 'max:25'],
-        ]);
-
-        $inserted  = 0;
-        $updated   = 0;
-        $errors    = [];
-        $enteredBy = $request->user()?->id;
-
-        // Cache scopes per exam_id to avoid N+1 per row
-        $scopeCache = [];
-
-        DB::transaction(function () use ($data, $enteredBy, &$inserted, &$updated, &$errors, &$scopeCache): void {
-            foreach ($data['rows'] as $i => $row) {
-                $line = $i + 2; // 1-indexed with header
-
-                $student = Student::query()
-                    ->where('student_code', trim($row['student_code']))
-                    ->first(['id', 'class_name', 'section']);
-
-                if (!$student) {
-                    $errors[] = ['row' => $line, 'error' => "Student code \"{$row['student_code']}\" not found."];
-                    continue;
-                }
-
-                // Verify the student belongs to this exam's scope (IDOR guard)
-                $examId = (int) $row['exam_id'];
-                if (!isset($scopeCache[$examId])) {
-                    $scopeCache[$examId] = ExamScope::query()
-                        ->where('exam_id', $examId)
-                        ->get(['class_name', 'section']);
-                }
-                $inScope = $scopeCache[$examId]->contains(function ($scope) use ($student) {
-                    return $scope->class_name === $student->class_name
-                        && ($scope->section === null || $scope->section === $student->section);
-                });
-                if (!$inScope) {
-                    $errors[] = ['row' => $line, 'error' => "Student \"{$row['student_code']}\" is not in the scope of exam {$examId}."];
-                    continue;
-                }
-
-                $subjectQuery = Subject::query()->where('is_active', true);
-                $subject = $subjectQuery->clone()
-                    ->where('name', trim($row['subject']))
-                    ->orWhere('code', trim($row['subject']))
-                    ->first(['id']);
-
-                if (!$subject) {
-                    $errors[] = ['row' => $line, 'error' => "Subject \"{$row['subject']}\" not found."];
-                    continue;
-                }
-
-                $raw = [
-                    'spot_test'   => isset($row['spot_test'])   && $row['spot_test']   !== '' ? (float) $row['spot_test']   : null,
-                    'class_test2' => isset($row['class_test2']) && $row['class_test2'] !== '' ? (float) $row['class_test2'] : null,
-                    'attendance'  => isset($row['attendance'])  && $row['attendance']  !== '' ? (float) $row['attendance']  : null,
-                    'term_marks'  => isset($row['term_marks'])  && $row['term_marks']  !== '' ? (float) $row['term_marks']  : null,
-                    'vt'          => isset($row['vt'])          && $row['vt']          !== '' ? (float) $row['vt']          : null,
-                ];
-
-                $existing = TermMark::query()->where([
-                    'exam_id'    => (int) $row['exam_id'],
-                    'student_id' => $student->id,
-                    'subject_id' => $subject->id,
-                ])->first();
-
-                if ($existing) {
-                    $existing->fill(array_merge($raw, ['entered_by' => $enteredBy]))->save();
-                    $updated++;
-                } else {
-                    TermMark::query()->create(array_merge($raw, [
-                        'exam_id'    => (int) $row['exam_id'],
-                        'student_id' => $student->id,
-                        'subject_id' => $subject->id,
-                        'entered_by' => $enteredBy,
-                    ]));
-                    $inserted++;
-                }
-            }
-        });
-
         return response()->json([
-            'imported' => $inserted + $updated,
-            'created'  => $inserted,
-            'updated'  => $updated,
-            'failed'   => count($errors),
-            'errors'   => $errors,
-        ], Response::HTTP_CREATED);
+            'message' => 'Bulk marks import has not been migrated to the new component-based schema yet.',
+        ], Response::HTTP_NOT_IMPLEMENTED);
     }
 }

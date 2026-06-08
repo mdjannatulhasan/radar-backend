@@ -3,7 +3,6 @@
 namespace App\Http\Controllers\Api\V1\Pps;
 
 use App\Http\Controllers\Controller;
-use App\Models\Pps\Assessment;
 use App\Models\Pps\PerformanceSnapshot;
 use App\Models\Pps\PpsAlert;
 use App\Services\Pps\TrendAnalyzerService;
@@ -117,39 +116,8 @@ class DashboardController extends Controller
             ))
             ->values();
 
-        $previousPeriod = \Carbon\Carbon::createFromFormat('Y-m', $period)->subMonth()->format('Y-m');
-        $previousTeacherScores = Assessment::query()
-            ->whereYear('exam_date', substr($previousPeriod, 0, 4))
-            ->whereMonth('exam_date', substr($previousPeriod, 5, 2))
-            ->whereNotNull('teacher_id')
-            ->groupBy('teacher_id', 'subject')
-            ->selectRaw('teacher_id, subject, AVG(percentage) as avg_score')
-            ->get()
-            ->keyBy(fn ($row) => "{$row->teacher_id}_{$row->subject}");
-
-        $teacherHighlights = Assessment::query()
-            ->whereYear('exam_date', substr($period, 0, 4))
-            ->whereMonth('exam_date', substr($period, 5, 2))
-            ->whereNotNull('teacher_id')
-            ->with('teacher:id,name')
-            ->groupBy('teacher_id', 'subject')
-            ->selectRaw('teacher_id, subject, AVG(percentage) as avg_score')
-            ->get()
-            ->map(function ($row) use ($previousTeacherScores): array {
-                $key = "{$row->teacher_id}_{$row->subject}";
-                $previous = $previousTeacherScores->get($key);
-                $change = $previous ? round((float) $row->avg_score - (float) $previous->avg_score, 1) : 0.0;
-
-                return [
-                    'teacher_name' => $row->teacher?->name ?? 'Unknown teacher',
-                    'subject' => $row->subject,
-                    'avg_score' => round((float) $row->avg_score, 1),
-                    'change' => $change,
-                ];
-            })
-            ->sortByDesc(fn (array $row) => $row['change'])
-            ->take(5)
-            ->values();
+        // Teacher attribution is not available in the new marks schema; return empty.
+        $teacherHighlights = collect();
 
         return response()->json([
             'period' => $period,

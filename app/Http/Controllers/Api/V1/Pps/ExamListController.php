@@ -3,46 +3,37 @@
 namespace App\Http\Controllers\Api\V1\Pps;
 
 use App\Http\Controllers\Controller;
-use App\Models\Pps\ExamDefinition;
+use App\Models\Pps\Exam;
 use Illuminate\Http\JsonResponse;
 
 class ExamListController extends Controller
 {
     public function index(): JsonResponse
     {
-        $exams = ExamDefinition::query()
-            ->with('scopes:id,exam_id,class_name,section,subject_id,department_id')
+        $exams = Exam::query()
+            ->with([
+                'examType:id,code,is_terminal',
+                'components:id,exam_id,code,label,max_raw_marks,max_contribution,sort_order',
+            ])
             ->where('is_active', true)
             ->orderBy('title')
-            ->get(['id', 'title', 'term', 'assessment_type']);
+            ->get(['id', 'title', 'term', 'academic_year', 'scope', 'exam_type_id']);
 
-        // Flatten to one row per scope for backwards-compat with marks entry selectors.
-        // Exams with no scopes appear once with null class/section.
-        $flat = [];
-        foreach ($exams as $exam) {
-            if ($exam->scopes->isEmpty()) {
-                $flat[] = [
-                    'id'              => $exam->id,
-                    'title'           => $exam->title,
-                    'class_name'      => null,
-                    'section'         => null,
-                    'term'            => $exam->term,
-                    'assessment_type' => $exam->assessment_type,
-                ];
-            } else {
-                foreach ($exam->scopes as $scope) {
-                    $flat[] = [
-                        'id'              => $exam->id,
-                        'title'           => $exam->title,
-                        'class_name'      => $scope->class_name,
-                        'section'         => $scope->section,
-                        'term'            => $exam->term,
-                        'assessment_type' => $exam->assessment_type,
-                        'subject_id'      => $scope->subject_id,
-                    ];
-                }
-            }
-        }
+        $flat = $exams->map(fn (Exam $exam) => [
+            'id'            => $exam->id,
+            'title'         => $exam->title,
+            'term'          => $exam->term,
+            'academic_year' => $exam->academic_year,
+            'scope'         => $exam->scope,
+            'is_terminal'   => (bool) ($exam->examType?->is_terminal),
+            'components'    => $exam->components->map(fn ($c) => [
+                'id'               => $c->id,
+                'code'             => $c->code,
+                'label'            => $c->label,
+                'max_raw_marks'    => $c->max_raw_marks,
+                'max_contribution' => $c->max_contribution,
+            ])->values()->all(),
+        ])->values()->all();
 
         return response()->json(['exams' => $flat]);
     }

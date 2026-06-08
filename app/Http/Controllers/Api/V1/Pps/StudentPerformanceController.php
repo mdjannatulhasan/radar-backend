@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Api\V1\Pps;
 use App\Http\Controllers\Controller;
 use App\Models\Pps\AcademicYear;
 use App\Models\Pps\Assessment;
+use App\Models\Pps\ComputedScore;
+use App\Models\Pps\Mark;
 use App\Models\Pps\BehaviorCard;
 use App\Models\Pps\ClassroomRating;
 use App\Models\Pps\CounselingSession;
@@ -174,46 +176,79 @@ class StudentPerformanceController extends Controller
 
     private function buildAssessmentBreakdown(int $studentId): array
     {
-        $rows = Assessment::query()
-            ->where('student_id', $studentId)
-            ->whereNotNull('marks_obtained')
-            ->orderBy('exam_date')
-            ->get(['subject', 'assessment_type', 'term', 'marks_obtained', 'total_marks', 'percentage', 'exam_date']);
+        $scores = ComputedScore::query()
+            ->join('pps_exams', 'pps_exams.id', '=', 'pps_computed_scores.exam_id')
+            ->join('pps_exam_types', 'pps_exam_types.id', '=', 'pps_exams.exam_type_id')
+            ->join('pps_subjects', 'pps_subjects.id', '=', 'pps_computed_scores.subject_id')
+            ->where('pps_computed_scores.student_id', $studentId)
+            ->orderBy('pps_exams.academic_year')
+            ->orderBy('pps_exams.term')
+            ->get([
+                'pps_subjects.name as subject',
+                'pps_exam_types.code as type_code',
+                'pps_exam_types.name as type_name',
+                'pps_exams.id as exam_id',
+                'pps_exams.title as exam_title',
+                'pps_exams.exam_date',
+                'pps_computed_scores.total_obtained',
+                'pps_computed_scores.total_possible',
+                'pps_computed_scores.percentage',
+                'pps_computed_scores.letter_grade',
+            ]);
 
-        // Group: subject → assessment_type → records
+        $marks = Mark::query()
+            ->join('pps_exam_components', 'pps_exam_components.id', '=', 'pps_marks.component_id')
+            ->join('pps_exams', 'pps_exams.id', '=', 'pps_exam_components.exam_id')
+            ->join('pps_exam_types', 'pps_exam_types.id', '=', 'pps_exams.exam_type_id')
+            ->join('pps_subjects', 'pps_subjects.id', '=', 'pps_marks.subject_id')
+            ->where('pps_marks.student_id', $studentId)
+            ->where('pps_exam_types.is_terminal', false)
+            ->get([
+                'pps_subjects.name as subject',
+                'pps_exam_types.code as type_code',
+                'pps_exams.exam_date',
+                'pps_marks.marks_obtained',
+                'pps_exam_components.max_raw_marks as total',
+            ]);
+
         $bySubject = [];
-        foreach ($rows as $row) {
-            $subject = $row->subject;
-            $type    = $row->assessment_type;
-            $bySubject[$subject][$type]['records'][] = [
-                'obtained'    => round((float) $row->marks_obtained, 2),
-                'total'       => (float) $row->total_marks,
-                'percentage'  => round((float) $row->percentage, 1),
-                'date'        => $row->exam_date,
-                'term'        => $row->term,
+        foreach ($scores as $score) {
+            $bySubject[$score->subject][$score->type_code]['records'][] = [
+                'obtained'   => round($score->total_obtained, 2),
+                'total'      => $score->total_possible,
+                'percentage' => round($score->percentage, 1),
+                'date'       => $score->exam_date,
+                'exam_title' => $score->exam_title,
+            ];
+        }
+        foreach ($marks as $mark) {
+            $bySubject[$mark->subject][$mark->type_code]['individual'][] = [
+                'obtained'   => round($mark->marks_obtained, 2),
+                'total'      => $mark->total,
+                'percentage' => round(($mark->marks_obtained / $mark->total) * 100, 1),
+                'date'       => $mark->exam_date,
             ];
         }
 
         $result = [];
         foreach ($bySubject as $subject => $types) {
-            $examTypes  = [];
-            $allPct     = [];
+            $examTypes = [];
+            $allPct    = [];
             foreach ($types as $type => $data) {
-                $records    = $data['records'];
-                $pcts       = array_column($records, 'percentage');
-                $obtaineds  = array_column($records, 'obtained');
-                $totalMarks = $records[0]['total'];
-                $avgPct     = round(array_sum($pcts) / count($pcts), 1);
-                $avgObt     = round(array_sum($obtaineds) / count($obtaineds), 1);
-
+                $records = $data['records'] ?? [];
+                if (empty($records)) continue;
+                $pcts      = array_column($records, 'percentage');
+                $obtaineds = array_column($records, 'obtained');
+                $avgPct    = round(array_sum($pcts) / count($pcts), 1);
+                $avgObt    = round(array_sum($obtaineds) / count($obtaineds), 1);
                 $examTypes[$type] = [
-                    'avg_pct'     => $avgPct,
-                    'avg_obtained'=> $avgObt,
-                    'total_marks' => $totalMarks,
-                    'highest_pct' => round(max($pcts), 1),
-                    'lowest_pct'  => round(min($pcts), 1),
-                    'count'       => count($records),
-                    'records'     => $records,
+                    'avg_pct'      => $avgPct,
+                    'avg_obtained' => $avgObt,
+                    'total_marks'  => $records[0]['total'],
+                    'highest_pct'  => round(max($pcts), 1),
+                    'lowest_pct'   => round(min($pcts), 1),
+                    'count'        => count($records),
+                    'records'      => $data['individual'] ?? $records,
                 ];
                 $allPct = array_merge($allPct, $pcts);
             }
@@ -225,7 +260,6 @@ class StudentPerformanceController extends Controller
         }
 
         usort($result, fn ($a, $b) => strcmp($a['subject'], $b['subject']));
-
         return $result;
     }
 

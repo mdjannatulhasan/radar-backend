@@ -3,6 +3,7 @@
 namespace App\Services\Pps;
 
 use App\Models\Pps\Assessment;
+use App\Models\Pps\ComputedScore;
 use App\Models\Pps\CounselingSession;
 use App\Models\Pps\PerformanceSnapshot;
 use App\Models\Student;
@@ -197,12 +198,15 @@ class StudentInsightService
             ->pluck('id');
 
         return $subjects->map(function (array $data, string $subject) use ($student, $classmates, $periodDate): array {
-            $averages = Assessment::query()
-                ->whereIn('student_id', $classmates)
-                ->where('subject', $subject)
-                ->whereYear('exam_date', $periodDate->year)
-                ->groupBy('student_id')
-                ->selectRaw('student_id, AVG(percentage) as avg_pct')
+            $subjectId = \Illuminate\Support\Facades\DB::table('pps_subjects')->where('name', $subject)->value('id');
+
+            $averages = ComputedScore::query()
+                ->join('pps_exams', 'pps_exams.id', '=', 'pps_computed_scores.exam_id')
+                ->whereIn('pps_computed_scores.student_id', $classmates)
+                ->where('pps_computed_scores.subject_id', $subjectId)
+                ->where('pps_exams.academic_year', $periodDate->year)
+                ->groupBy('pps_computed_scores.student_id')
+                ->selectRaw('pps_computed_scores.student_id, AVG(pps_computed_scores.percentage) as avg_pct')
                 ->orderByDesc('avg_pct')
                 ->get();
 

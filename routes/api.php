@@ -4,10 +4,9 @@ use App\Http\Controllers\Api\V1\Auth\AuthController;
 use App\Http\Controllers\Api\V1\Pps\AlertController;
 use App\Http\Controllers\Api\V1\Pps\AdministrationController;
 use App\Http\Controllers\Api\V1\Pps\AssessmentController;
+use App\Http\Controllers\Api\V1\Pps\MarksController;
 use App\Http\Controllers\Api\V1\Pps\MarksMetaController;
-use App\Http\Controllers\Api\V1\Pps\TermMarksController;
 use App\Http\Controllers\Api\V1\Pps\PretestMarksController;
-use App\Http\Controllers\Api\V1\Pps\AssessmentMarksController;
 use App\Http\Controllers\Api\V1\Pps\ExamListController;
 use App\Http\Controllers\Api\V1\Pps\ResultSummaryController;
 use App\Http\Controllers\Api\V1\Pps\AttendanceController;
@@ -150,10 +149,6 @@ Route::prefix('v1/pps')
         ->middleware('pps.can:admin_panel.manage');
     Route::delete('/admin/exams/{exam}', [AdministrationController::class, 'destroyExam'])
         ->middleware('pps.can:admin_panel.manage');
-    Route::post('/admin/exams/{exam}/scopes', [AdministrationController::class, 'storeExamScope'])
-        ->middleware('pps.can:admin_panel.manage');
-    Route::delete('/admin/exams/{exam}/scopes/{scope}', [AdministrationController::class, 'destroyExamScope'])
-        ->middleware('pps.can:admin_panel.manage');
 
     Route::post('/admin/teachers', [AdministrationController::class, 'storeTeacher'])
         ->middleware('pps.can:admin_panel.manage');
@@ -225,22 +220,16 @@ Route::prefix('v1/pps')
     Route::get('/marks/meta', [MarksMetaController::class, 'index'])
         ->middleware('pps.can:marks.read');
 
-    // Marks entry — Format A: GET is read, POST is write
-    Route::get('/marks/term', [TermMarksController::class, 'index'])
+    // Unified marks entry (new schema)
+    Route::get('/marks', [MarksController::class, 'index'])
         ->middleware('pps.can:marks.read');
-    Route::post('/marks/term', [TermMarksController::class, 'bulkStore'])
+    Route::post('/marks', [MarksController::class, 'bulkStore'])
         ->middleware('pps.can:marks.write');
 
-    // Marks entry — Format B: pretest
+    // Legacy marks entry — kept for pretest (not migrated)
     Route::get('/marks/pretest', [PretestMarksController::class, 'index'])
         ->middleware('pps.can:marks.read');
     Route::post('/marks/pretest', [PretestMarksController::class, 'bulkStore'])
-        ->middleware('pps.can:marks.write');
-
-    // Marks entry — Format C: simple assessment (quiz, class_test, final, etc. → pps_assessments)
-    Route::get('/marks/assessment', [AssessmentMarksController::class, 'index'])
-        ->middleware('pps.can:marks.read');
-    Route::post('/marks/assessment', [AssessmentMarksController::class, 'bulkStore'])
         ->middleware('pps.can:marks.write');
 
     // Result summary — GET is read, POST compute is write

@@ -2,8 +2,8 @@
 
 namespace App\Services\Pps;
 
-use App\Models\Pps\Assessment;
 use App\Models\Pps\AttendanceRecord;
+use App\Models\Pps\ComputedScore;
 use App\Models\Pps\BehaviorCard;
 use App\Models\Pps\ClassroomRating;
 use App\Models\Pps\Extracurricular;
@@ -78,10 +78,11 @@ class ScoreCalculatorService
         $periodStart = $anchor->copy()->subMonths(2)->startOfMonth();
         $periodEnd = $anchor->copy()->endOfMonth();
 
-        $result = Assessment::query()
-            ->where('student_id', $studentId)
-            ->whereBetween('exam_date', [$periodStart, $periodEnd])
-            ->selectRaw('AVG(percentage) as avg_pct, COUNT(*) as total')
+        $result = ComputedScore::query()
+            ->join('pps_exams', 'pps_exams.id', '=', 'pps_computed_scores.exam_id')
+            ->where('pps_computed_scores.student_id', $studentId)
+            ->whereBetween('pps_exams.exam_date', [$periodStart, $periodEnd])
+            ->selectRaw('AVG(pps_computed_scores.percentage) as avg_pct, COUNT(*) as total')
             ->first();
 
         return ($result?->total ?? 0) > 0 ? round((float) $result->avg_pct, 2) : 70.0;
@@ -187,17 +188,19 @@ class ScoreCalculatorService
         $periodEnd = Carbon::create($year, $month, 1)->endOfMonth();
         $currentPeriod = sprintf('%04d-%02d', $year, $month);
 
-        $subjects = Assessment::query()
-            ->where('student_id', $studentId)
-            ->whereBetween('exam_date', [$periodStart, $periodEnd])
-            ->groupBy('subject')
-            ->selectRaw('subject, AVG(percentage) as avg, COUNT(*) as total')
+        $subjects = ComputedScore::query()
+            ->join('pps_exams', 'pps_exams.id', '=', 'pps_computed_scores.exam_id')
+            ->join('pps_subjects', 'pps_subjects.id', '=', 'pps_computed_scores.subject_id')
+            ->where('pps_computed_scores.student_id', $studentId)
+            ->whereBetween('pps_exams.exam_date', [$periodStart, $periodEnd])
+            ->groupBy('pps_computed_scores.subject_id', 'pps_subjects.name')
+            ->selectRaw('pps_subjects.name as subject_name, AVG(pps_computed_scores.percentage) as avg, COUNT(*) as total')
             ->get()
-            ->mapWithKeys(fn (Assessment $assessment) => [
-                $assessment->subject => [
-                    'avg' => round((float) $assessment->avg, 1),
-                    'count' => (int) $assessment->total,
-                    'trend' => $this->trendAnalyzer->calcSubjectTrend($studentId, $assessment->subject, $currentPeriod),
+            ->mapWithKeys(fn ($row) => [
+                $row->subject_name => [
+                    'avg'   => round((float) $row->avg, 1),
+                    'count' => (int) $row->total,
+                    'trend' => $this->trendAnalyzer->calcSubjectTrend($studentId, $row->subject_name, $currentPeriod),
                 ],
             ])
             ->toArray();
