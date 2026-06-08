@@ -201,7 +201,6 @@ class StudentInsightService
                 ->whereIn('student_id', $classmates)
                 ->where('subject', $subject)
                 ->whereYear('exam_date', $periodDate->year)
-                ->whereMonth('exam_date', $periodDate->month)
                 ->groupBy('student_id')
                 ->selectRaw('student_id, AVG(percentage) as avg_pct')
                 ->orderByDesc('avg_pct')

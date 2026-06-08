@@ -38,6 +38,7 @@ class ExamListController extends Controller
                         'section'         => $scope->section,
                         'term'            => $exam->term,
                         'assessment_type' => $exam->assessment_type,
+                        'subject_id'      => $scope->subject_id,
                     ];
                 }
             }

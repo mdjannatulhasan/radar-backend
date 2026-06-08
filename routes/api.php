@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\V1\Pps\AssessmentController;
 use App\Http\Controllers\Api\V1\Pps\MarksMetaController;
 use App\Http\Controllers\Api\V1\Pps\TermMarksController;
 use App\Http\Controllers\Api\V1\Pps\PretestMarksController;
+use App\Http\Controllers\Api\V1\Pps\AssessmentMarksController;
 use App\Http\Controllers\Api\V1\Pps\ExamListController;
 use App\Http\Controllers\Api\V1\Pps\ResultSummaryController;
 use App\Http\Controllers\Api\V1\Pps\AttendanceController;
@@ -191,6 +192,8 @@ Route::prefix('v1/pps')
         ->middleware('pps.can:bulk_import.manage');
     Route::post('/admin/bulk/teacher-assignments', [AdministrationController::class, 'bulkTeacherAssignments'])
         ->middleware('pps.can:bulk_import.manage');
+    Route::post('/admin/bulk/marks', [AdministrationController::class, 'bulkMarks'])
+        ->middleware('pps.can:bulk_import.manage');
 
     Route::get('/reports/custom', [StudentPerformanceController::class, 'customReport'])
         ->middleware('pps.can:reports.view');
@@ -228,10 +231,16 @@ Route::prefix('v1/pps')
     Route::post('/marks/term', [TermMarksController::class, 'bulkStore'])
         ->middleware('pps.can:marks.write');
 
-    // Marks entry — Format B: same pattern
+    // Marks entry — Format B: pretest
     Route::get('/marks/pretest', [PretestMarksController::class, 'index'])
         ->middleware('pps.can:marks.read');
     Route::post('/marks/pretest', [PretestMarksController::class, 'bulkStore'])
+        ->middleware('pps.can:marks.write');
+
+    // Marks entry — Format C: simple assessment (quiz, class_test, final, etc. → pps_assessments)
+    Route::get('/marks/assessment', [AssessmentMarksController::class, 'index'])
+        ->middleware('pps.can:marks.read');
+    Route::post('/marks/assessment', [AssessmentMarksController::class, 'bulkStore'])
         ->middleware('pps.can:marks.write');
 
     // Result summary — GET is read, POST compute is write

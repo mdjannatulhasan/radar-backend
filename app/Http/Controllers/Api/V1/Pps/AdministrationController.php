@@ -884,4 +884,111 @@ class AdministrationController extends Controller
 
         return in_array(strtolower(trim((string) $value)), ['1', 'true', 'yes', 'y'], true);
     }
+
+    /**
+     * POST /admin/bulk/marks
+     *
+     * CSV columns: student_code, exam_id, subject, spot_test, class_test2, attendance, term_marks, vt
+     * Resolves student_id by student_code, subject_id by subject name/code.
+     * Upserts into pps_term_marks (same logic as TermMarksController@bulkStore but without con calculation).
+     */
+    public function bulkMarks(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'rows'                   => ['required', 'array', 'min:1'],
+            'rows.*.student_code'    => ['required', 'string'],
+            'rows.*.exam_id'         => ['required', 'integer', 'exists:pps_exam_definitions,id'],
+            'rows.*.subject'         => ['required', 'string'],
+            'rows.*.spot_test'       => ['nullable', 'numeric', 'min:0', 'max:10'],
+            'rows.*.class_test2'     => ['nullable', 'numeric', 'min:0', 'max:20'],
+            'rows.*.attendance'      => ['nullable', 'numeric', 'min:0', 'max:5'],
+            'rows.*.term_marks'      => ['nullable', 'numeric', 'min:0', 'max:100'],
+            'rows.*.vt'              => ['nullable', 'numeric', 'min:0', 'max:25'],
+        ]);
+
+        $inserted  = 0;
+        $updated   = 0;
+        $errors    = [];
+        $enteredBy = $request->user()?->id;
+
+        // Cache scopes per exam_id to avoid N+1 per row
+        $scopeCache = [];
+
+        DB::transaction(function () use ($data, $enteredBy, &$inserted, &$updated, &$errors, &$scopeCache): void {
+            foreach ($data['rows'] as $i => $row) {
+                $line = $i + 2; // 1-indexed with header
+
+                $student = Student::query()
+                    ->where('student_code', trim($row['student_code']))
+                    ->first(['id', 'class_name', 'section']);
+
+                if (!$student) {
+                    $errors[] = ['row' => $line, 'error' => "Student code \"{$row['student_code']}\" not found."];
+                    continue;
+                }
+
+                // Verify the student belongs to this exam's scope (IDOR guard)
+                $examId = (int) $row['exam_id'];
+                if (!isset($scopeCache[$examId])) {
+                    $scopeCache[$examId] = ExamScope::query()
+                        ->where('exam_id', $examId)
+                        ->get(['class_name', 'section']);
+                }
+                $inScope = $scopeCache[$examId]->contains(function ($scope) use ($student) {
+                    return $scope->class_name === $student->class_name
+                        && ($scope->section === null || $scope->section === $student->section);
+                });
+                if (!$inScope) {
+                    $errors[] = ['row' => $line, 'error' => "Student \"{$row['student_code']}\" is not in the scope of exam {$examId}."];
+                    continue;
+                }
+
+                $subjectQuery = Subject::query()->where('is_active', true);
+                $subject = $subjectQuery->clone()
+                    ->where('name', trim($row['subject']))
+                    ->orWhere('code', trim($row['subject']))
+                    ->first(['id']);
+
+                if (!$subject) {
+                    $errors[] = ['row' => $line, 'error' => "Subject \"{$row['subject']}\" not found."];
+                    continue;
+                }
+
+                $raw = [
+                    'spot_test'   => isset($row['spot_test'])   && $row['spot_test']   !== '' ? (float) $row['spot_test']   : null,
+                    'class_test2' => isset($row['class_test2']) && $row['class_test2'] !== '' ? (float) $row['class_test2'] : null,
+                    'attendance'  => isset($row['attendance'])  && $row['attendance']  !== '' ? (float) $row['attendance']  : null,
+                    'term_marks'  => isset($row['term_marks'])  && $row['term_marks']  !== '' ? (float) $row['term_marks']  : null,
+                    'vt'          => isset($row['vt'])          && $row['vt']          !== '' ? (float) $row['vt']          : null,
+                ];
+
+                $existing = TermMark::query()->where([
+                    'exam_id'    => (int) $row['exam_id'],
+                    'student_id' => $student->id,
+                    'subject_id' => $subject->id,
+                ])->first();
+
+                if ($existing) {
+                    $existing->fill(array_merge($raw, ['entered_by' => $enteredBy]))->save();
+                    $updated++;
+                } else {
+                    TermMark::query()->create(array_merge($raw, [
+                        'exam_id'    => (int) $row['exam_id'],
+                        'student_id' => $student->id,
+                        'subject_id' => $subject->id,
+                        'entered_by' => $enteredBy,
+                    ]));
+                    $inserted++;
+                }
+            }
+        });
+
+        return response()->json([
+            'imported' => $inserted + $updated,
+            'created'  => $inserted,
+            'updated'  => $updated,
+            'failed'   => count($errors),
+            'errors'   => $errors,
+        ], Response::HTTP_CREATED);
+    }
 }

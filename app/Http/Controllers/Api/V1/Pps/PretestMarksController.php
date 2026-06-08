@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Pps;
 
 use App\Http\Controllers\Controller;
 use App\Models\Pps\ExamDefinition;
+use App\Models\Pps\ExamScope;
 use App\Models\Pps\PretestMark;
 use App\Models\Pps\Subject;
 use App\Models\Student;
@@ -33,9 +34,17 @@ class PretestMarksController extends Controller
 
         $exam = ExamDefinition::query()->findOrFail($data['exam_id']);
 
-        $query = Student::query()->where('class_name', $exam->class_name);
-        if ($exam->section !== null) {
-            $query->where('section', $exam->section);
+        $scope = ExamScope::query()
+            ->where('exam_id', $data['exam_id'])
+            ->where('subject_id', $data['subject_id'])
+            ->first();
+
+        $className = $scope?->class_name ?? $exam->class_name;
+        $section   = $scope?->section   ?? $exam->section;
+
+        $query = Student::query()->where('class_name', $className);
+        if ($section !== null) {
+            $query->where('section', $section);
         }
         $students = $query->orderBy('roll_number')->get(['id', 'name', 'roll_number', 'student_code', 'stream_id']);
 
