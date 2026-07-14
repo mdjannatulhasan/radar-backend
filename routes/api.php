@@ -3,7 +3,6 @@
 use App\Http\Controllers\Api\V1\Auth\AuthController;
 use App\Http\Controllers\Api\V1\Pps\AlertController;
 use App\Http\Controllers\Api\V1\Pps\AdministrationController;
-use App\Http\Controllers\Api\V1\Pps\AssessmentController;
 use App\Http\Controllers\Api\V1\Pps\MarksController;
 use App\Http\Controllers\Api\V1\Pps\MarksMetaController;
 use App\Http\Controllers\Api\V1\Pps\PretestMarksController;
@@ -73,13 +72,6 @@ Route::prefix('v1/pps')
         ->middleware('pps.can:classes.view');
     Route::get('/teachers/effectiveness', [StudentPerformanceController::class, 'teacherEffectiveness'])
         ->middleware('pps.can:teacher_effectiveness.view');
-
-    Route::get('/assessments', [AssessmentController::class, 'index'])
-        ->middleware('pps.can:assessments.manage');
-    Route::post('/assessments', [AssessmentController::class, 'store'])
-        ->middleware('pps.can:assessments.manage');
-    Route::post('/assessments/bulk', [AssessmentController::class, 'bulkStore'])
-        ->middleware('pps.can:assessments.manage');
 
     Route::get('/attendance', [AttendanceController::class, 'index'])
         ->middleware('pps.can:attendance.manage');
@@ -233,6 +225,8 @@ Route::prefix('v1/pps')
         ->middleware('pps.can:marks.write');
 
     // Result summary — GET is read, POST compute is write
+    Route::get('/results/meta', [ResultSummaryController::class, 'meta'])
+        ->middleware('pps.can:results.read');
     Route::get('/results/summary', [ResultSummaryController::class, 'index'])
         ->middleware('pps.can:results.read');
     Route::post('/results/compute', [ResultSummaryController::class, 'compute'])

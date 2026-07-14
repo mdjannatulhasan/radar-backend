@@ -2,8 +2,8 @@
 
 namespace App\Services\Pps;
 
-use App\Models\Pps\Assessment;
 use App\Models\Pps\ComputedScore;
+use App\Models\Pps\Mark;
 use App\Models\Pps\CounselingSession;
 use App\Models\Pps\PerformanceSnapshot;
 use App\Models\Student;
@@ -156,12 +156,16 @@ class StudentInsightService
             $subject = $entry['subject'];
             $studentAverage = (float) (($snapshot->snapshot_data['subjects'][$subject]['avg'] ?? 0));
 
-            $classAverage = (float) (Assessment::query()
-                ->whereIn('student_id', $classmates)
-                ->where('subject', $subject)
-                ->whereYear('exam_date', substr($period, 0, 4))
-                ->whereMonth('exam_date', substr($period, 5, 2))
-                ->avg('percentage') ?? 0);
+            $classAverage = (float) (Mark::query()
+                ->join('pps_exam_components', 'pps_exam_components.id', '=', 'pps_marks.component_id')
+                ->join('pps_exams', 'pps_exams.id', '=', 'pps_exam_components.exam_id')
+                ->join('pps_subjects', 'pps_subjects.id', '=', 'pps_marks.subject_id')
+                ->whereIn('pps_marks.student_id', $classmates)
+                ->where('pps_subjects.name', $subject)
+                ->whereYear('pps_exams.exam_date', (int) substr($period, 0, 4))
+                ->whereMonth('pps_exams.exam_date', (int) substr($period, 5, 2))
+                ->selectRaw('AVG((pps_marks.marks_obtained / NULLIF(pps_exam_components.max_raw_marks, 0)) * 100) as avg_pct')
+                ->value('avg_pct') ?? 0);
 
             $effectiveness = match (true) {
                 $studentAverage >= $classAverage + 5 => 'effective',

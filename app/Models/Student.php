@@ -2,7 +2,6 @@
 
 namespace App\Models;
 
-use App\Models\Pps\Assessment;
 use App\Models\Pps\AttendanceRecord;
 use App\Models\Pps\BehaviorCard;
 use App\Models\Pps\ClassroomRating;
@@ -31,11 +30,6 @@ class Student extends Model
             'ability_score' => 'integer',
             'economically_vulnerable' => 'boolean',
         ];
-    }
-
-    public function assessments(): HasMany
-    {
-        return $this->hasMany(Assessment::class);
     }
 
     public function attendanceRecords(): HasMany
