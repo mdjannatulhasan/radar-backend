@@ -4,8 +4,8 @@ namespace App\Http\Controllers\Api\V1\Pps;
 
 use App\Http\Controllers\Controller;
 use App\Models\Pps\AcademicYear;
-use App\Models\Pps\Assessment;
 use App\Models\Pps\ComputedScore;
+use Illuminate\Support\Facades\DB;
 use App\Models\Pps\Mark;
 use App\Models\Pps\BehaviorCard;
 use App\Models\Pps\ClassroomRating;
@@ -477,38 +477,46 @@ class StudentPerformanceController extends Controller
             ")
             ->first();
 
-        $subjectPerformance = Assessment::query()
-            ->whereIn('student_id', $studentIds)
-            ->whereYear('exam_date', substr($period, 0, 4))
-            ->whereMonth('exam_date', substr($period, 5, 2))
+        $year = (int) substr($period, 0, 4);
+        $month = (int) substr($period, 5, 2);
+
+        $subjectPerformance = Mark::query()
+            ->join('pps_exam_components', 'pps_exam_components.id', '=', 'pps_marks.component_id')
+            ->join('pps_exams', 'pps_exams.id', '=', 'pps_exam_components.exam_id')
+            ->join('pps_subjects', 'pps_subjects.id', '=', 'pps_marks.subject_id')
+            ->whereIn('pps_marks.student_id', $studentIds)
+            ->whereYear('pps_exams.exam_date', $year)
             ->when(
                 $viewer?->hasAnyRole('teacher') && ! $fullSubjectVisibility,
-                fn ($query) => $query->whereIn('subject', $visibleSubjects)
+                fn ($query) => $query->whereIn('pps_subjects.name', $visibleSubjects)
             )
-            ->groupBy('subject')
+            ->groupBy('pps_marks.subject_id', 'pps_subjects.name')
             ->selectRaw("
-                subject,
-                ROUND(AVG(percentage), 1) as class_avg,
-                MIN(percentage) as min_score,
-                MAX(percentage) as max_score,
+                pps_subjects.name as subject,
+                ROUND(AVG((pps_marks.marks_obtained / NULLIF(pps_exam_components.max_raw_marks, 0)) * 100), 1) as class_avg,
+                MIN((pps_marks.marks_obtained / NULLIF(pps_exam_components.max_raw_marks, 0)) * 100) as min_score,
+                MAX((pps_marks.marks_obtained / NULLIF(pps_exam_components.max_raw_marks, 0)) * 100) as max_score,
                 COUNT(*) as assessment_count
             ")
             ->orderBy('class_avg')
             ->get()
-            ->map(function (Assessment $assessment) use ($period): array {
-                $schoolAverage = Assessment::query()
-                    ->where('subject', $assessment->subject)
-                    ->whereYear('exam_date', substr($period, 0, 4))
-                    ->whereMonth('exam_date', substr($period, 5, 2))
-                    ->avg('percentage');
+            ->map(function ($row) use ($period, $year, $month): array {
+                $schoolAverage = Mark::query()
+                    ->join('pps_exam_components', 'pps_exam_components.id', '=', 'pps_marks.component_id')
+                    ->join('pps_exams', 'pps_exams.id', '=', 'pps_exam_components.exam_id')
+                    ->join('pps_subjects', 'pps_subjects.id', '=', 'pps_marks.subject_id')
+                    ->where('pps_subjects.name', $row->subject)
+                    ->whereYear('pps_exams.exam_date', $year)
+                    ->selectRaw('AVG((pps_marks.marks_obtained / NULLIF(pps_exam_components.max_raw_marks, 0)) * 100) as avg_pct')
+                    ->value('avg_pct') ?? 0.0;
 
                 return [
-                    'subject' => $assessment->subject,
-                    'class_avg' => round((float) $assessment->class_avg, 1),
-                    'min_score' => round((float) $assessment->min_score, 1),
-                    'max_score' => round((float) $assessment->max_score, 1),
-                    'assessment_count' => (int) $assessment->assessment_count,
-                    'school_gap' => round((float) $assessment->class_avg - (float) $schoolAverage, 1),
+                    'subject' => $row->subject,
+                    'class_avg' => round((float) $row->class_avg, 1),
+                    'min_score' => round((float) $row->min_score, 1),
+                    'max_score' => round((float) $row->max_score, 1),
+                    'assessment_count' => (int) $row->assessment_count,
+                    'school_gap' => round((float) $row->class_avg - (float) $schoolAverage, 1),
                 ];
             });
 
@@ -574,49 +582,74 @@ class StudentPerformanceController extends Controller
         /** @var User|null $viewer */
         $viewer = $request->user();
         $period = $this->resolvePeriod($request);
-        $previousPeriod = Carbon::createFromFormat('Y-m', $period)->subMonth()->format('Y-m');
 
-        $previous = Assessment::query()
-            ->whereYear('exam_date', substr($previousPeriod, 0, 4))
-            ->whereMonth('exam_date', substr($previousPeriod, 5, 2))
-            ->whereNotNull('teacher_id')
-            ->when($viewer?->hasAnyRole('teacher'), fn ($query) => $query->where('teacher_id', $viewer->id))
-            ->groupBy('teacher_id', 'subject')
-            ->selectRaw('teacher_id, subject, ROUND(AVG(percentage), 1) as prev_avg')
-            ->get()
+        // Find the most recent prior period that actually has exam data.
+        $previousPeriodDate = DB::table('pps_exams')
+            ->whereRaw("TO_CHAR(exam_date, 'YYYY-MM') < ?", [$period])
+            ->orderByDesc('exam_date')
+            ->value('exam_date');
+        $previousPeriod = $previousPeriodDate
+            ? Carbon::parse($previousPeriodDate)->format('Y-m')
+            : Carbon::createFromFormat('Y-m', $period)->subMonth()->format('Y-m');
+
+        $buildEffectivenessQuery = function (string $p) use ($viewer) {
+            $year = (int) substr($p, 0, 4);
+            $month = (int) substr($p, 5, 2);
+
+            return DB::table('pps_teacher_assignments as ta')
+                ->join('students as s', function ($join) {
+                    $join->on('s.class_name', '=', 'ta.class_name')
+                         ->on('s.section', '=', 'ta.section');
+                })
+                ->join('pps_marks as m', 'm.student_id', '=', 's.id')
+                ->join('pps_subjects as sub', function ($join) {
+                    $join->on('sub.id', '=', 'm.subject_id')
+                         ->whereColumn('sub.name', 'ta.subject');
+                })
+                ->join('pps_exam_components as ec', 'ec.id', '=', 'm.component_id')
+                ->join('pps_exams as e', 'e.id', '=', 'ec.exam_id')
+                ->whereYear('e.exam_date', $year)
+                ->whereMonth('e.exam_date', $month)
+                ->when($viewer?->hasAnyRole('teacher'), fn ($q) => $q->where('ta.teacher_id', $viewer->id))
+                ->groupBy('ta.teacher_id', 'ta.subject')
+                ->selectRaw("
+                    ta.teacher_id,
+                    ta.subject,
+                    ROUND(AVG((m.marks_obtained / NULLIF(ec.max_raw_marks, 0)) * 100), 1) as avg_score,
+                    COUNT(DISTINCT m.student_id) as student_count,
+                    COUNT(*) as assessment_count
+                ")
+                ->orderByDesc('avg_score')
+                ->get();
+        };
+
+        $previous = $buildEffectivenessQuery($previousPeriod)
             ->keyBy(fn ($row) => "{$row->teacher_id}_{$row->subject}");
 
-        $effectiveness = Assessment::query()
-            ->whereYear('exam_date', substr($period, 0, 4))
-            ->whereMonth('exam_date', substr($period, 5, 2))
-            ->whereNotNull('teacher_id')
-            ->when($viewer?->hasAnyRole('teacher'), fn ($query) => $query->where('teacher_id', $viewer->id))
-            ->with('teacher:id,name')
-            ->groupBy('teacher_id', 'subject')
-            ->selectRaw("
-                teacher_id,
-                subject,
-                ROUND(AVG(percentage), 1) as avg_score,
-                COUNT(DISTINCT student_id) as student_count,
-                COUNT(*) as assessment_count
-            ")
-            ->orderByDesc('avg_score')
-            ->get()
-            ->map(function (Assessment $row) use ($previous): array {
-                $key = "{$row->teacher_id}_{$row->subject}";
-                $previousValue = $previous->get($key);
+        $current = $buildEffectivenessQuery($period);
 
-                return [
-                    'teacher_id' => $row->teacher_id,
-                    'teacher_name' => $row->teacher?->name ?? 'Unknown teacher',
-                    'subject' => $row->subject,
-                    'avg_score' => round((float) $row->avg_score, 1),
-                    'previous_avg' => $previousValue ? round((float) $previousValue->prev_avg, 1) : null,
-                    'student_count' => (int) $row->student_count,
-                    'assessment_count' => (int) $row->assessment_count,
-                    'change' => $previousValue ? round((float) $row->avg_score - (float) $previousValue->prev_avg, 1) : null,
-                ];
-            });
+        $allTeacherIds = $current->pluck('teacher_id')
+            ->merge($previous->pluck('teacher_id'))
+            ->unique();
+
+        $teacherNames = \App\Models\User::whereIn('id', $allTeacherIds)
+            ->pluck('name', 'id');
+
+        $effectiveness = $current->map(function ($row) use ($previous, $teacherNames): array {
+            $key = "{$row->teacher_id}_{$row->subject}";
+            $previousValue = $previous->get($key);
+
+            return [
+                'teacher_id' => $row->teacher_id,
+                'teacher_name' => $teacherNames[$row->teacher_id] ?? 'Unknown teacher',
+                'subject' => $row->subject,
+                'avg_score' => round((float) $row->avg_score, 1),
+                'previous_avg' => $previousValue ? round((float) $previousValue->avg_score, 1) : null,
+                'student_count' => (int) $row->student_count,
+                'assessment_count' => (int) $row->assessment_count,
+                'change' => $previousValue ? round((float) $row->avg_score - (float) $previousValue->avg_score, 1) : null,
+            ];
+        });
 
         return response()->json([
             'period' => $period,

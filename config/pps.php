@@ -18,6 +18,8 @@ return [
         'grade_drop_warning' => 10,
         'grade_drop_urgent' => 20,
         'yellow_cards_warning' => 3,
+        'heatmap_score_critical' => 70,
+        'heatmap_score_attention' => 82,
     ],
     'notifications' => [
         'notify_parent_on_warning' => true,

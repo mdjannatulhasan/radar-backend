@@ -36,6 +36,8 @@ class SchoolPpsConfigController extends Controller
             'send_monthly_parent_report' => ['nullable', 'boolean'],
             'send_weekly_principal_summary' => ['nullable', 'boolean'],
             'notify_guardian_email_on_urgent' => ['nullable', 'boolean'],
+            'heatmap_score_critical' => ['nullable', 'numeric', 'min:0', 'max:100'],
+            'heatmap_score_attention' => ['nullable', 'numeric', 'min:0', 'max:100'],
         ]);
 
         $config = SchoolPpsConfig::current();

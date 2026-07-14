@@ -32,6 +32,8 @@ class SchoolPpsConfig extends Model
             'send_monthly_parent_report' => 'boolean',
             'send_weekly_principal_summary' => 'boolean',
             'notify_guardian_email_on_urgent' => 'boolean',
+            'heatmap_score_critical' => 'float',
+            'heatmap_score_attention' => 'float',
         ];
     }
 
@@ -62,6 +64,8 @@ class SchoolPpsConfig extends Model
             'send_monthly_parent_report' => config('pps.notifications.send_monthly_parent_report'),
             'send_weekly_principal_summary' => config('pps.notifications.send_weekly_principal_summary'),
             'notify_guardian_email_on_urgent' => config('pps.notifications.notify_guardian_email_on_urgent'),
+            'heatmap_score_critical' => config('pps.thresholds.heatmap_score_critical'),
+            'heatmap_score_attention' => config('pps.thresholds.heatmap_score_attention'),
         ];
     }
 }
