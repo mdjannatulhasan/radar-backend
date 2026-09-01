@@ -685,7 +685,7 @@ class ReportCardService
             $pct >= 40 => ['C',  2.00],
             $pct >= 33 => ['D',  1.00],
             default    => ['F',  0.00],
-        ];
+        };
     }
 
     private function wrapHtml(string $body): string
