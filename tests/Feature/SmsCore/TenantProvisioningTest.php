@@ -26,6 +26,10 @@ class TenantProvisioningTest extends TestCase
      */
     protected $connectionsToTransact = ['pgsql', 'central'];
 
+    // The default TestCase now provisions its own 'cpscs' tenant; this test
+    // provisions its own, so it must opt out to avoid a duplicate-id clash.
+    protected ?string $tenantSlug = null;
+
     protected function tearDown(): void
     {
         \DB::connection('central')->statement('DROP SCHEMA IF EXISTS tenant_cpscs CASCADE');

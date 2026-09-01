@@ -27,6 +27,8 @@ class SubdomainTenancyTest extends TestCase
      */
     protected $connectionsToTransact = ['pgsql', 'central'];
 
+    protected ?string $tenantSlug = null;
+
     protected function setUp(): void
     {
         parent::setUp();

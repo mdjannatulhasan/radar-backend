@@ -16,7 +16,9 @@ class ProductGateTest extends TestCase
 {
     use RefreshDatabase;
 
-    protected array $connectionsToTransact = ['pgsql', 'central'];
+    protected $connectionsToTransact = ['pgsql', 'central'];
+
+    protected ?string $tenantSlug = null;
 
     protected function setUp(): void
     {

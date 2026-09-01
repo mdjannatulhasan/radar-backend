@@ -27,20 +27,20 @@ use App\Http\Controllers\Api\V1\Pps\ClassStructureController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1/auth')
-    ->middleware(['throttle:pps-auth', 'pps.security'])
+    ->middleware(['tenant', 'product:radar', 'throttle:pps-auth', 'pps.security'])
     ->group(function (): void {
         Route::post('/login', [AuthController::class, 'login']);
     });
 
 Route::prefix('v1/auth')
-    ->middleware(['auth:sanctum', 'throttle:pps-api', 'pps.security'])
+    ->middleware(['tenant', 'product:radar', 'auth:sanctum', 'throttle:pps-api', 'pps.security'])
     ->group(function (): void {
         Route::get('/me', [AuthController::class, 'me']);
         Route::post('/logout', [AuthController::class, 'logout']);
     });
 
 Route::prefix('v1/pps')
-    ->middleware(['auth:sanctum', 'throttle:pps-api', 'pps.security'])
+    ->middleware(['tenant', 'product:radar', 'auth:sanctum', 'throttle:pps-api', 'pps.security'])
     ->group(function (): void {
     Route::get('/dashboard/summary', [DashboardController::class, 'summary'])
         ->middleware('pps.can:dashboard.view');
