@@ -51,6 +51,14 @@ class Tenant extends BaseTenant implements TenantWithDatabase
             ->where(function ($q): void {
                 $q->whereNull('expires_at')->orWhere('expires_at', '>', now());
             })
+            // A trial also lapses on trial_ends_at. Without this a trial whose
+            // trial_ends_at has passed but whose expires_at was never set stays
+            // enabled forever.
+            ->where(function ($q): void {
+                $q->where('status', '!=', 'trial')
+                    ->orWhereNull('trial_ends_at')
+                    ->orWhere('trial_ends_at', '>', now());
+            })
             ->exists();
     }
 }
