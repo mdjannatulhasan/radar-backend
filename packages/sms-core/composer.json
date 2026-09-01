@@ -1,0 +1,26 @@
+{
+    "name": "sms/core",
+    "description": "Shared multi-tenant core for the SMS platform (RADAR, Autoroutine).",
+    "type": "library",
+    "license": "proprietary",
+    "require": {
+        "php": "^8.3",
+        "laravel/framework": "^13.0",
+        "laravel/sanctum": "^4.0",
+        "stancl/tenancy": "^3.10"
+    },
+    "autoload": {
+        "psr-4": {
+            "SmsCore\\": "src/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "SmsCore\\SmsCoreServiceProvider"
+            ]
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
