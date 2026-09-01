@@ -5,6 +5,8 @@ namespace Tests;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
+use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\DB;
 use Laravel\Sanctum\Sanctum;
 use SmsCore\Models\Tenant;
 use SmsCore\Models\TenantProduct;
@@ -19,33 +21,26 @@ abstract class TestCase extends BaseTestCase
      * test that provisions its own tenant(s) directly (everything under
      * tests/Feature/SmsCore) must do this, or it collides with the tenant
      * this class creates.
-     *
-     * FINDING (see the 1.6/1.7 handoff notes): tenancy()->initialize() below
-     * does NOT swap the Postgres search_path, cache prefix, filesystem paths,
-     * or queue connection, even though config/tenancy.php lists
-     * DatabaseTenancyBootstrapper etc. under `bootstrappers`. Those only run
-     * via Stancl\Tenancy\Listeners\BootstrapTenancy, which stancl's own
-     * TenancyServiceProvider deliberately leaves unregistered — that wiring
-     * normally lives in an app-published TenancyServiceProvider, which this
-     * platform doesn't have (SmsCoreServiceProvider only wires TenantCreated
-     * -> CreateDatabase, not TenancyInitialized/TenancyEnded -> bootstrap()).
-     * So today, initializing tenancy only sets the tenant context that the
-     * tenant()/tenant('slug') helpers read; every query still runs against
-     * the `pgsql` connection's normal search_path (`public`), where all of
-     * RADAR's existing tables already live. That is exactly why the
-     * "tenant schema is empty" problem the plan anticipated does not yet
-     * bite here — there's no per-tenant connection switch to fall foul of
-     * it. Wiring up that listener belongs with Phase 2, alongside the
-     * tenant-schema migrations it would actually need to switch into; doing
-     * it now would just swap every RADAR query onto an empty schema with
-     * nothing in it, which is strictly worse. Do not "fix" this by adding
-     * that listener without also giving tenants real schemas to point at.
      */
     protected ?string $tenantSlug = 'cpscs';
 
     protected ?Tenant $tenant = null;
 
     protected $connectionsToTransact = ['pgsql', 'central'];
+
+    /**
+     * Connection used only to build tenant schemas. It is deliberately NOT in
+     * $connectionsToTransact: its work has to COMMIT so that every later
+     * connection can see the migrated schema.
+     */
+    private const SCHEMA_BUILD_CONNECTION = 'sms_core_schema_build';
+
+    /**
+     * Tenant slugs whose schema has already been migrated in this PHP process.
+     *
+     * @var array<int, string>
+     */
+    private static array $migratedTenantSchemas = [];
 
     protected function setUp(): void
     {
@@ -71,11 +66,18 @@ abstract class TestCase extends BaseTestCase
             return;
         }
 
+        $this->migrateTenantSchemaOnce($this->tenantSlug);
+
         $this->tenant = Tenant::create([
             'id' => $this->tenantSlug,
             'name' => 'Test School',
             'slug' => $this->tenantSlug,
             'provisioning_status' => 'ready',
+            // The schema already exists and is migrated (see
+            // migrateTenantSchemaOnce). Without this, stancl's CreateDatabase
+            // listener would try to CREATE SCHEMA again and throw
+            // TenantDatabaseAlreadyExistsException.
+            'tenancy_create_database' => false,
         ]);
 
         TenantProduct::create([
@@ -93,11 +95,76 @@ abstract class TestCase extends BaseTestCase
 
     protected function tearDown(): void
     {
-        if (tenancy()->initialized) {
-            tenancy()->end();
+        // tenancy()->end() issues `set search_path to public` on the pgsql
+        // connection. A test that failed on a bad query leaves that
+        // connection's transaction in Postgres' *aborted* state, where every
+        // statement — including that one — errors. If that exception escaped,
+        // parent::tearDown() would never run, RefreshDatabase would never roll
+        // back, and the next test would block forever on the rows this one
+        // left uncommitted. The rollback below makes the search_path moot
+        // anyway, so failing to reset it is not information worth propagating.
+        try {
+            if (tenancy()->initialized) {
+                tenancy()->end();
+            }
+        } catch (\Throwable) {
+            // Intentionally ignored; see above.
         }
 
         parent::tearDown();
+    }
+
+    /**
+     * Build and migrate a tenant schema once per PHP process.
+     *
+     * The alternative — migrating the tenant schema inside each test's
+     * transaction — is honest but runs 30-odd migrations per test. This is
+     * the same bargain RefreshDatabase already strikes for the central
+     * schema: build the structure once per process with `migrate:fresh`,
+     * then let a per-test transaction roll back the rows. The schema is
+     * created on a connection outside $connectionsToTransact so that it
+     * COMMITS and every later connection can see it; every row a test then
+     * writes into it goes through `pgsql`, which IS transacted, so no test
+     * can see another test's rows. The schema is dropped and rebuilt at the
+     * start of each process, so a stale one can never be inherited.
+     */
+    private function migrateTenantSchemaOnce(string $slug): void
+    {
+        if (in_array($slug, self::$migratedTenantSchemas, true)) {
+            return;
+        }
+
+        $schema = config('tenancy.database.prefix').$slug.config('tenancy.database.suffix');
+
+        config([
+            'database.connections.'.self::SCHEMA_BUILD_CONNECTION => array_merge(
+                config('database.connections.'.config('tenancy.database.template_tenant_connection')),
+                ['search_path' => $schema],
+            ),
+        ]);
+
+        DB::purge(self::SCHEMA_BUILD_CONNECTION);
+
+        $build = DB::connection(self::SCHEMA_BUILD_CONNECTION);
+        $build->statement('DROP SCHEMA IF EXISTS "'.$schema.'" CASCADE');
+        $build->statement('CREATE SCHEMA "'.$schema.'"');
+
+        $exitCode = Artisan::call('migrate', [
+            '--database' => self::SCHEMA_BUILD_CONNECTION,
+            '--path' => config('tenancy.migration_parameters.--path'),
+            '--realpath' => config('tenancy.migration_parameters.--realpath', false),
+            '--force' => true,
+        ]);
+
+        if ($exitCode !== 0) {
+            throw new \RuntimeException(
+                "Failed to migrate tenant schema {$schema}:\n".Artisan::output()
+            );
+        }
+
+        DB::purge(self::SCHEMA_BUILD_CONNECTION);
+
+        self::$migratedTenantSchemas[] = $slug;
     }
 
     protected function signInPps(User $user): static
