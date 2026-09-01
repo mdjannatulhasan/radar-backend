@@ -190,11 +190,11 @@ class ScoreCalculatorService
 
         $subjects = ComputedScore::query()
             ->join('pps_exams', 'pps_exams.id', '=', 'pps_computed_scores.exam_id')
-            ->join('pps_subjects', 'pps_subjects.id', '=', 'pps_computed_scores.subject_id')
+            ->join('subjects', 'subjects.id', '=', 'pps_computed_scores.subject_id')
             ->where('pps_computed_scores.student_id', $studentId)
             ->whereBetween('pps_exams.exam_date', [$periodStart, $periodEnd])
-            ->groupBy('pps_computed_scores.subject_id', 'pps_subjects.name')
-            ->selectRaw('pps_subjects.name as subject_name, AVG(pps_computed_scores.percentage) as avg, COUNT(*) as total')
+            ->groupBy('pps_computed_scores.subject_id', 'subjects.full_name')
+            ->selectRaw('subjects.full_name as subject_name, AVG(pps_computed_scores.percentage) as avg, COUNT(*) as total')
             ->get()
             ->mapWithKeys(fn ($row) => [
                 $row->subject_name => [

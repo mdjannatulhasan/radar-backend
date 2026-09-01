@@ -13,6 +13,7 @@ use Stancl\Tenancy\Events\TenancyEnded;
 use Stancl\Tenancy\Events\TenancyInitialized;
 use Stancl\Tenancy\Events\TenantCreated;
 use Stancl\Tenancy\Jobs\CreateDatabase;
+use Stancl\Tenancy\Jobs\MigrateDatabase;
 use Stancl\Tenancy\Listeners\BootstrapTenancy;
 use Stancl\Tenancy\Listeners\RevertToCentralContext;
 use Stancl\Tenancy\Tenancy;
@@ -53,8 +54,14 @@ class SmsCoreServiceProvider extends ServiceProvider
      */
     protected function bootTenancyEvents(): void
     {
+        // A tenant row without tables is not a tenant, so provisioning is one
+        // step: create the schema, then migrate it. CreateDatabase returns
+        // false — terminating the pipeline — when a tenant is created with
+        // `tenancy_create_database => false`, so a caller that has already
+        // built the schema itself (the test harness) does not migrate twice.
         Event::listen(TenantCreated::class, JobPipeline::make([
             CreateDatabase::class,
+            MigrateDatabase::class,
         ])->send(function (TenantCreated $event) {
             return $event->tenant;
         })->shouldBeQueued(false)->toListener());

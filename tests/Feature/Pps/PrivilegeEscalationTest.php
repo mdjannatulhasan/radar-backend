@@ -2,7 +2,7 @@
 
 namespace Tests\Feature\Pps;
 
-use App\Models\User;
+use SmsCore\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
 use Tests\TestCase;
@@ -13,7 +13,7 @@ class PrivilegeEscalationTest extends TestCase
 
     private function makeUser(string $role, string $suffix = ''): User
     {
-        return User::query()->create([
+        return $this->createUser([
             'name'     => ucfirst($role),
             'email'    => "{$role}{$suffix}@example.test",
             'role'     => $role,

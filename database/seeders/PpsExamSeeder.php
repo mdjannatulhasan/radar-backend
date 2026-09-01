@@ -1,175 +1,112 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Database\Seeders;
 
-use App\Models\Pps\ClassSection;
-use App\Models\Pps\Department;
-use App\Models\Pps\ExamDefinition;
-use App\Models\Pps\Stream;
-use App\Models\Pps\Subject;
 use Illuminate\Database\Seeder;
 
+/**
+ * Term and pre-test exams.
+ *
+ * Was: one pps_exam_definitions row per (class, subject, term), carrying
+ * class_name / section / department_id / subject_id on the exam row itself.
+ * That table is gone. The same data is now one pps_exams row per (class, term)
+ * with a pps_exam_class_map row per subject — 78 class x subject scopes, as
+ * before, expressed as 15 exams instead of 78.
+ *
+ * Streams (pps_streams) are gone too: class 12's Science stream is
+ * class_levels.group on the class itself, set by PpsAdministrationSeeder.
+ */
 class PpsExamSeeder extends Seeder
 {
+    /** Format A: the core catalogue, classes 4–10. */
+    private const FORMAT_A_CLASSES = ['4', '5', '6', '7', '8', '9', '10'];
+
+    /**
+     * Format B: HSC subjects, class 12. The old rows carried a department_id
+     * (Science / Humanities / General); that column no longer exists —
+     * the stream now lives on class_levels.group.
+     *
+     * @var array<int, array{short:string, full:string}>
+     */
+    private const FORMAT_B_SUBJECTS = [
+        ['short' => 'BAN-HSC', 'full' => 'Bangla (HSC)'],
+        ['short' => 'ENG-HSC', 'full' => 'English (HSC)'],
+        ['short' => 'PHY', 'full' => 'Physics'],
+        ['short' => 'CHM', 'full' => 'Chemistry'],
+        ['short' => 'BIO', 'full' => 'Biology'],
+        ['short' => 'HMT', 'full' => 'Higher Mathematics'],
+        ['short' => 'HIS', 'full' => 'History'],
+        ['short' => 'GEO', 'full' => 'Geography'],
+    ];
+
     public function run(): void
     {
         $year = now()->year;
 
-        $general = Department::query()->firstOrCreate(
-            ['code' => 'GEN'],
-            ['name' => 'General', 'description' => 'Common academic subjects across classes.']
-        );
-        $science = Department::query()->firstOrCreate(
-            ['code' => 'SCI'],
-            ['name' => 'Science', 'description' => 'Science stream.']
-        );
-        $humanities = Department::query()->firstOrCreate(
-            ['code' => 'HUM'],
-            ['name' => 'Humanities', 'description' => 'Humanities stream.']
-        );
-
-        // --- Format A subjects (classes 4–10) ---
-        $formatASubjects = [
-            ['name' => 'Bangla', 'code' => 'BAN', 'department_id' => $general->id],
-            ['name' => 'English', 'code' => 'ENG', 'department_id' => $general->id],
-            ['name' => 'Mathematics', 'code' => 'MTH', 'department_id' => $general->id],
-            ['name' => 'Science', 'code' => 'SCIENCE', 'department_id' => $science->id],
-            ['name' => 'Social Studies', 'code' => 'SOC', 'department_id' => $humanities->id],
-        ];
-
-        foreach ($formatASubjects as $s) {
-            Subject::query()->updateOrCreate(['code' => $s['code']], [
-                'name' => $s['name'],
-                'department_id' => $s['department_id'],
-                'is_active' => true,
-            ]);
-        }
-
-        $subjectMap = Subject::query()->get()->keyBy('name');
-
-        // 1st Term — Format A, classes 4–10
-        foreach (['4', '5', '6', '7', '8', '9', '10'] as $className) {
-            $term = "{$year}-T1";
-            foreach (['Bangla', 'English', 'Mathematics', 'Science', 'Social Studies'] as $subjectName) {
-                $subject = $subjectMap->get($subjectName);
-                ExamDefinition::query()->updateOrCreate(
-                    ['code' => "{$className}-{$subject?->code}-1ST-{$year}"],
-                    [
-                        'title' => "Class {$className} — 1st Term {$year}",
-                        'assessment_type' => 'first_term',
-                        'term' => $term,
-                        'total_marks' => 100,
-                        'exam_date' => "{$year}-06-15",
-                        'class_name' => $className,
-                        'section' => null,
-                        'department_id' => $subject?->department_id,
-                        'subject_id' => $subject?->id,
-                        'is_active' => true,
-                    ]
-                );
-            }
-        }
-
-        // 2nd Term — Format A, classes 4–10
-        foreach (['4', '5', '6', '7', '8', '9', '10'] as $className) {
-            $term = "{$year}-T2";
-            foreach (['Bangla', 'English', 'Mathematics', 'Science', 'Social Studies'] as $subjectName) {
-                $subject = $subjectMap->get($subjectName);
-                ExamDefinition::query()->updateOrCreate(
-                    ['code' => "{$className}-{$subject?->code}-2ND-{$year}"],
-                    [
-                        'title' => "Class {$className} — 2nd Term {$year}",
-                        'assessment_type' => 'second_term',
-                        'term' => $term,
-                        'total_marks' => 100,
-                        'exam_date' => "{$year}-11-20",
-                        'class_name' => $className,
-                        'section' => null,
-                        'department_id' => $subject?->department_id,
-                        'subject_id' => $subject?->id,
-                        'is_active' => true,
-                    ]
-                );
-            }
-        }
-
-        // --- Format B subjects (class 12) ---
-        $formatBSubjects = [
-            ['name' => 'Bangla (HSC)', 'code' => 'BAN-HSC', 'department_id' => $general->id],
-            ['name' => 'English (HSC)', 'code' => 'ENG-HSC', 'department_id' => $general->id],
-            ['name' => 'Physics', 'code' => 'PHY', 'department_id' => $science->id],
-            ['name' => 'Chemistry', 'code' => 'CHM', 'department_id' => $science->id],
-            ['name' => 'Biology', 'code' => 'BIO', 'department_id' => $science->id],
-            ['name' => 'Higher Mathematics', 'code' => 'HMT', 'department_id' => $science->id],
-            ['name' => 'History', 'code' => 'HIS', 'department_id' => $humanities->id],
-            ['name' => 'Geography', 'code' => 'GEO', 'department_id' => $humanities->id],
-        ];
-
-        foreach ($formatBSubjects as $s) {
-            Subject::query()->updateOrCreate(['code' => $s['code']], [
-                'name' => $s['name'],
-                'department_id' => $s['department_id'],
-                'is_active' => true,
-            ]);
-        }
-
-        $subjectMap = Subject::query()->get()->keyBy('code');
-
-        // Class 12 sections for each stream
-        $streams = Stream::query()->get()->keyBy('code');
-        $sciStream = $streams->get('SCI');
-        $humStream = $streams->get('HUM');
-        $bstStream = $streams->get('BST');
-
-        foreach (['12'] as $className) {
-            foreach ([
-                ['code' => 'BAN-HSC', 'stream_id' => null],
-                ['code' => 'ENG-HSC', 'stream_id' => null],
-                ['code' => 'PHY', 'stream_id' => $sciStream?->id],
-                ['code' => 'CHM', 'stream_id' => $sciStream?->id],
-                ['code' => 'BIO', 'stream_id' => $sciStream?->id],
-                ['code' => 'HMT', 'stream_id' => $sciStream?->id],
-                ['code' => 'HIS', 'stream_id' => $humStream?->id],
-                ['code' => 'GEO', 'stream_id' => $humStream?->id],
-            ] as $entry) {
-                $subject = $subjectMap->get($entry['code']);
-                ExamDefinition::query()->updateOrCreate(
-                    ['code' => "{$className}-{$entry['code']}-PRETEST-{$year}"],
-                    [
-                        'title' => "Class {$className} Pre-Test {$year} — {$subject?->name}",
-                        'assessment_type' => 'pretest',
-                        'term' => "{$year}-T1",
-                        'total_marks' => 100,
-                        'exam_date' => "{$year}-04-30",
-                        'class_name' => $className,
-                        'section' => null,
-                        'department_id' => $subject?->department_id,
-                        'subject_id' => $subject?->id,
-                        'is_active' => true,
-                    ]
-                );
-            }
-        }
-
-        // Class 12 sections
-        foreach (['A', 'B'] as $section) {
-            ClassSection::query()->updateOrCreate(
-                ['class_name' => '12', 'section' => $section],
-                [
-                    'department_id' => $science->id,
-                    'capacity' => 40,
-                    'class_level' => 12,
-                    'stream_id' => $sciStream?->id,
-                    'is_active' => true,
-                ]
+        // Format A subjects — School level. Idempotent with PpsAdministrationSeeder.
+        foreach (PpsAdministrationSeeder::CORE_SUBJECTS as $subject) {
+            PpsAdministrationSeeder::subject(
+                $subject['short'],
+                $subject['full'],
+                PpsAdministrationSeeder::LEVEL_SCHOOL,
             );
         }
 
-        // Ensure class_level is set on existing sections
-        ClassSection::query()->whereIn('class_name', ['4', '5', '6', '7', '8', '9', '10'])
-            ->get()
-            ->each(function (ClassSection $cs) {
-                $cs->update(['class_level' => (int) $cs->class_name]);
-            });
+        $formatA = array_column(PpsAdministrationSeeder::CORE_SUBJECTS, 'short');
+
+        $firstTerm = PpsAdministrationSeeder::examType('first_term', '1st Term', true);
+        $secondTerm = PpsAdministrationSeeder::examType('second_term', '2nd Term', true);
+        $pretest = PpsAdministrationSeeder::examType('pretest', 'Pre-Test', false);
+
+        // 1st Term — Format A, classes 4–10
+        foreach (self::FORMAT_A_CLASSES as $className) {
+            PpsAdministrationSeeder::examForClass(
+                $firstTerm,
+                $className,
+                "Class {$className} — 1st Term {$year}",
+                1,
+                "{$year}-06-15",
+                $formatA,
+            );
+        }
+
+        // 2nd Term — Format A, classes 4–10
+        foreach (self::FORMAT_A_CLASSES as $className) {
+            PpsAdministrationSeeder::examForClass(
+                $secondTerm,
+                $className,
+                "Class {$className} — 2nd Term {$year}",
+                2,
+                "{$year}-11-20",
+                $formatA,
+            );
+        }
+
+        // Format B subjects — College level.
+        foreach (self::FORMAT_B_SUBJECTS as $subject) {
+            PpsAdministrationSeeder::subject(
+                $subject['short'],
+                $subject['full'],
+                PpsAdministrationSeeder::LEVEL_COLLEGE,
+            );
+        }
+
+        // Class 12 sections. The old seed made 12A and 12B in the Science
+        // stream; the stream is now class_levels.group on class 12 itself.
+        foreach (PpsAdministrationSeeder::SECTION_NAMES as $sectionName) {
+            PpsAdministrationSeeder::section('12', $sectionName);
+        }
+
+        // Class 12 pre-test, all eight Format B subjects.
+        PpsAdministrationSeeder::examForClass(
+            $pretest,
+            '12',
+            "Class 12 Pre-Test {$year}",
+            1,
+            "{$year}-04-30",
+            array_column(self::FORMAT_B_SUBJECTS, 'short'),
+        );
     }
 }

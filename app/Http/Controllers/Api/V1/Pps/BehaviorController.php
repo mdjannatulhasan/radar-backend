@@ -4,9 +4,11 @@ namespace App\Http\Controllers\Api\V1\Pps;
 
 use App\Http\Controllers\Controller;
 use App\Models\Pps\BehaviorCard;
-use App\Models\Student;
-use App\Models\User;
+use SmsCore\Models\Student;
+use SmsCore\Models\User;
 use App\Services\Pps\ScoreCalculatorService;
+use App\Support\StudentTaxonomyFilter;
+use App\Support\TeacherScope;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -23,7 +25,10 @@ class BehaviorController extends Controller
         /** @var User|null $viewer */
         $viewer = $request->user();
         $cards = BehaviorCard::query()
-            ->with('student:id,name,class_name,section,roll_number')
+            ->with(array_merge(
+                ['student:id,name,roll_number'],
+                StudentTaxonomyFilter::eagerLoadVia('student'),
+            ))
             ->when($viewer?->hasAnyRole('teacher'), fn ($query) => $query->where('issued_by', $viewer->id))
             ->when($request->filled('student_id'), fn ($query) => $query->where('student_id', $request->integer('student_id')))
             ->orderByDesc('issued_at')
@@ -48,7 +53,7 @@ class BehaviorController extends Controller
 
         $student = Student::query()->findOrFail($data['student_id']);
 
-        if ($viewer?->hasAnyRole('teacher') && ! $viewer->isAssignedToClass($student->class_name, $student->section)) {
+        if ($viewer?->hasAnyRole('teacher') && ! TeacherScope::isAssignedToSection($viewer, $student->section_id)) {
             abort(Response::HTTP_FORBIDDEN, 'You are not assigned to this class.');
         }
 

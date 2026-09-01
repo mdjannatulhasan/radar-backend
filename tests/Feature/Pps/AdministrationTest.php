@@ -2,8 +2,8 @@
 
 namespace Tests\Feature\Pps;
 
-use App\Models\Student;
-use App\Models\User;
+use SmsCore\Models\Student;
+use SmsCore\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
 use Tests\TestCase;
@@ -14,14 +14,14 @@ class AdministrationTest extends TestCase
 
     public function test_superadmin_can_manage_admin_catalog_and_students(): void
     {
-        $superadmin = User::query()->create([
+        $superadmin = $this->createUser([
             'name' => 'Super Admin',
             'email' => 'superadmin@example.test',
             'role' => 'superadmin',
             'password' => Hash::make('password'),
         ]);
 
-        $teacher = User::query()->create([
+        $teacher = $this->createUser([
             'name' => 'Teacher',
             'email' => 'teacher@example.test',
             'role' => 'teacher',
@@ -101,14 +101,14 @@ class AdministrationTest extends TestCase
 
     public function test_teacher_bulk_import_accepts_student_codes_only_for_assigned_scope(): void
     {
-        $teacher = User::query()->create([
+        $teacher = $this->createUser([
             'name' => 'Teacher',
             'email' => 'teacher@example.test',
             'role' => 'teacher',
             'password' => Hash::make('password'),
         ]);
 
-        $allowedStudent = Student::query()->create([
+        $allowedStudent = $this->makeStudent([
             'student_code' => 'RADAR-101',
             'name' => 'Allowed Student',
             'class_name' => '8',
@@ -116,7 +116,7 @@ class AdministrationTest extends TestCase
             'roll_number' => 1,
         ]);
 
-        $blockedStudent = Student::query()->create([
+        $blockedStudent = $this->makeStudent([
             'student_code' => 'RADAR-102',
             'name' => 'Blocked Student',
             'class_name' => '9',
@@ -124,15 +124,7 @@ class AdministrationTest extends TestCase
             'roll_number' => 2,
         ]);
 
-        $this->app['db']->table('pps_teacher_assignments')->insert([
-            'teacher_id' => $teacher->id,
-            'class_name' => '8',
-            'section' => 'A',
-            'subject' => 'Mathematics',
-            'is_class_teacher' => false,
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
+        $this->assignTeacher($teacher, '8', 'A', 'Mathematics');
 
         $session = $this->signInPps($teacher);
 

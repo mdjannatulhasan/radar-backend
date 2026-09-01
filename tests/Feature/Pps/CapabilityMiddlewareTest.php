@@ -2,7 +2,7 @@
 
 namespace Tests\Feature\Pps;
 
-use App\Models\User;
+use SmsCore\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
 use Tests\TestCase;
@@ -21,7 +21,7 @@ class CapabilityMiddlewareTest extends TestCase
 
     private function user(string $role): User
     {
-        return User::query()->create([
+        return $this->createUser([
             'name'     => ucfirst($role),
             'email'    => "{$role}@example.test",
             'role'     => $role,
@@ -95,7 +95,7 @@ class CapabilityMiddlewareTest extends TestCase
 
     public function test_student_context_view_denied_for_welfare_officer(): void
     {
-        $student = \App\Models\Student::query()->create([
+        $student = $this->makeStudent([
             'student_code' => 'S002', 'name' => 'Test2', 'class_name' => '10', 'section' => 'A', 'roll_number' => 2,
         ]);
 
@@ -273,7 +273,7 @@ class CapabilityMiddlewareTest extends TestCase
 
     public function test_principal_cannot_manage_welfare(): void
     {
-        $student = \App\Models\Student::query()->create([
+        $student = $this->makeStudent([
             'student_code' => 'S003', 'name' => 'Test3', 'class_name' => '10', 'section' => 'A', 'roll_number' => 3,
         ]);
 

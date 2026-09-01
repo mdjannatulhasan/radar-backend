@@ -2,16 +2,20 @@
 
 namespace Database\Factories;
 
-use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
+use SmsCore\Models\School;
+use SmsCore\Models\User;
 
 /**
  * @extends Factory<User>
  */
 class UserFactory extends Factory
 {
+    /** @var class-string<User> */
+    protected $model = User::class;
+
     /**
      * The current password being used by the factory.
      */
@@ -25,6 +29,11 @@ class UserFactory extends Factory
     public function definition(): array
     {
         return [
+            // users.school_id is NOT NULL in the tenant schema: a login always
+            // belongs to a campus. Attach to whichever school the caller has
+            // already set up, and only invent one when there is none.
+            'school_id' => fn (): int => School::query()->value('id')
+                ?? School::create(['name' => 'Test School', 'slug' => 'test-school'])->id,
             'name' => fake()->name(),
             'email' => fake()->unique()->safeEmail(),
             'email_verified_at' => now(),

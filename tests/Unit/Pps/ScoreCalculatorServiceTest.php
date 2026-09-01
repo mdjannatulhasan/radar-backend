@@ -8,7 +8,7 @@ use App\Models\Pps\BehaviorCard;
 use App\Models\Pps\ClassroomRating;
 use App\Models\Pps\Extracurricular;
 use App\Models\Pps\SchoolPpsConfig;
-use App\Models\Student;
+use SmsCore\Models\Student;
 use App\Services\Pps\ScoreCalculatorService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -21,7 +21,7 @@ class ScoreCalculatorServiceTest extends TestCase
     {
         SchoolPpsConfig::current();
 
-        $student = Student::query()->create([
+        $student = $this->makeStudent([
             'student_code' => 'PPS-010',
             'name' => 'Nabila Sultana',
             'class_name' => '8',

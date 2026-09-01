@@ -2,7 +2,8 @@
 
 namespace Tests;
 
-use App\Models\User;
+use SmsCore\Models\User;
+use Tests\Support\TaxonomyFixtures;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
 use Illuminate\Support\Facades\Artisan;
@@ -13,6 +14,8 @@ use SmsCore\Models\TenantProduct;
 
 abstract class TestCase extends BaseTestCase
 {
+    use TaxonomyFixtures;
+
     /**
      * Tests that exercise RADAR endpoints need a resolved tenant. Setting
      * $tenantSlug provisions it, enables RADAR for it, initialises tenancy,
@@ -21,8 +24,13 @@ abstract class TestCase extends BaseTestCase
      * test that provisions its own tenant(s) directly (everything under
      * tests/Feature/SmsCore) must do this, or it collides with the tenant
      * this class creates.
+     *
+     * The slug is deliberately NOT 'cpscs': several tests under
+     * tests/Feature/SmsCore provision a tenant named 'cpscs' themselves, and
+     * this one's schema is built once per process and COMMITTED, so sharing the
+     * name makes every one of them die on TenantDatabaseAlreadyExistsException.
      */
-    protected ?string $tenantSlug = 'cpscs';
+    protected ?string $tenantSlug = 'radartest';
 
     protected ?Tenant $tenant = null;
 
@@ -70,7 +78,7 @@ abstract class TestCase extends BaseTestCase
 
         $this->tenant = Tenant::create([
             'id' => $this->tenantSlug,
-            'name' => 'Test School',
+            'name' => 'RADAR Test School',
             'slug' => $this->tenantSlug,
             'provisioning_status' => 'ready',
             // The schema already exists and is migrated (see
@@ -149,6 +157,8 @@ abstract class TestCase extends BaseTestCase
         $build->statement('DROP SCHEMA IF EXISTS "'.$schema.'" CASCADE');
         $build->statement('CREATE SCHEMA "'.$schema.'"');
 
+        self::dropSchemaOnShutdown($build->getConfig(), $schema);
+
         $exitCode = Artisan::call('migrate', [
             '--database' => self::SCHEMA_BUILD_CONNECTION,
             '--path' => config('tenancy.migration_parameters.--path'),
@@ -165,6 +175,27 @@ abstract class TestCase extends BaseTestCase
         DB::purge(self::SCHEMA_BUILD_CONNECTION);
 
         self::$migratedTenantSchemas[] = $slug;
+    }
+
+    /**
+     * The build schema is committed, so nothing in the test lifecycle rolls it
+     * back. Drop it when the process ends rather than leaving a tenant_* schema
+     * behind in the test database after every run. Raw PDO, because by the time
+     * shutdown functions run the Laravel container is gone.
+     *
+     * @param  array<string, mixed>  $config
+     */
+    private static function dropSchemaOnShutdown(array $config, string $schema): void
+    {
+        register_shutdown_function(static function () use ($config, $schema): void {
+            try {
+                $dsn = sprintf('pgsql:host=%s;port=%s;dbname=%s', $config['host'], $config['port'], $config['database']);
+                (new \PDO($dsn, $config['username'], $config['password']))
+                    ->exec('DROP SCHEMA IF EXISTS "'.$schema.'" CASCADE');
+            } catch (\Throwable) {
+                // Best effort: the next run drops and recreates the schema anyway.
+            }
+        });
     }
 
     protected function signInPps(User $user): static

@@ -47,11 +47,15 @@ class RolePermissionSeeder extends Seeder
         // Seed permission_modules
         $modules = array_keys(ModuleCapabilities::MAP);
         foreach ($modules as $i => $module) {
+            // permission_modules is now shared across products, and its unique
+            // key is (product, name) — RADAR's modules must be upserted on that
+            // pair or Postgres has no matching constraint for ON CONFLICT.
             DB::table('permission_modules')->upsert([
+                'product'    => 'radar',
                 'name'       => $module,
                 'label'      => self::MODULE_LABELS[$module] ?? ucfirst(str_replace('_', ' ', $module)),
                 'sort_order' => $i,
-            ], ['name'], ['label', 'sort_order']);
+            ], ['product', 'name'], ['label', 'sort_order']);
         }
 
         // Seed role_permissions from the static MAP

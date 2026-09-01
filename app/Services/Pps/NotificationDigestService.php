@@ -2,11 +2,13 @@
 
 namespace App\Services\Pps;
 
+use App\Models\Pps\PerformanceSnapshot;
 use App\Models\Pps\PpsAlert;
 use App\Models\Pps\PpsNotificationLog;
 use App\Models\Pps\SchoolPpsConfig;
-use App\Models\Student;
-use App\Models\User;
+use App\Support\StudentTaxonomyFilter;
+use SmsCore\Models\Student;
+use SmsCore\Models\User;
 
 class NotificationDigestService
 {
@@ -53,12 +55,20 @@ class NotificationDigestService
         $activePeriod = $period ?: now()->format('Y-m');
         $students = Student::query()
             ->whereNotNull('guardian_email')
-            ->with(['performanceSnapshots' => fn ($query) => $query->where('snapshot_period', $activePeriod)])
             ->get();
+
+        // Student is an sms-core model and cannot carry a relation to a RADAR
+        // table, so the period's snapshots are fetched once and indexed by student
+        // instead of eager-loaded.
+        $snapshots = PerformanceSnapshot::query()
+            ->forPeriod($activePeriod)
+            ->whereIn('student_id', $students->modelKeys())
+            ->get()
+            ->keyBy('student_id');
 
         $created = 0;
         foreach ($students as $student) {
-            $snapshot = $student->performanceSnapshots->first();
+            $snapshot = $snapshots->get($student->id);
             $guardian = User::query()->where('email', $student->guardian_email)->first();
 
             if (! $snapshot || ! $guardian) {
@@ -123,7 +133,13 @@ class NotificationDigestService
     public function queryLogsForViewer(?User $user, array $filters = [])
     {
         $query = PpsNotificationLog::query()
-            ->with('student:id,name,class_name,section', 'recipient:id,name,email,role')
+            // class_name / section are no longer columns on students; they are
+            // derived from the current enrollment, so eager-load that chain instead
+            // of selecting them.
+            ->with(array_merge(
+                ['student:id,name', 'recipient:id,name,email,role'],
+                StudentTaxonomyFilter::eagerLoadVia('student'),
+            ))
             ->orderByDesc('generated_at')
             ->orderByDesc('id');
 

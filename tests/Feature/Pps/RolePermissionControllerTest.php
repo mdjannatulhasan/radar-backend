@@ -3,7 +3,7 @@
 namespace Tests\Feature\Pps;
 
 use App\Models\Pps\RolePermission;
-use App\Models\User;
+use SmsCore\Models\User;
 use App\Support\ModuleCapabilities;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -23,7 +23,7 @@ class RolePermissionControllerTest extends TestCase
 
     private function admin(): User
     {
-        return User::query()->create([
+        return $this->createUser([
             'name'     => 'Admin',
             'email'    => 'admin@example.test',
             'role'     => 'admin',
@@ -33,7 +33,7 @@ class RolePermissionControllerTest extends TestCase
 
     private function teacher(): User
     {
-        return User::query()->create([
+        return $this->createUser([
             'name'     => 'Teacher',
             'email'    => 'teacher@example.test',
             'role'     => 'teacher',

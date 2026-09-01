@@ -2,25 +2,50 @@
 
 namespace Database\Seeders;
 
-use App\Models\Pps\Assessment;
 use App\Models\Pps\AttendanceRecord;
 use App\Models\Pps\BehaviorCard;
 use App\Models\Pps\ClassroomRating;
 use App\Models\Pps\CounselingSession;
 use App\Models\Pps\Extracurricular;
+use App\Models\Pps\Mark;
 use App\Models\Pps\PpsAlert;
 use App\Models\Pps\PerformanceSnapshot;
 use App\Models\Pps\SchoolPpsConfig;
 use App\Models\Pps\TeacherAssignment;
-use App\Models\Student;
-use App\Models\User;
+use SmsCore\Models\Student;
+use SmsCore\Models\Teacher;
+use SmsCore\Models\User;
 use Carbon\Carbon;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 
 class PpsDemoSeeder extends Seeder
 {
     public const DEMO_PASSWORD = 'PpsDemo2026!';
+
+    /** The school every seeded row belongs to. sms-core tables all carry it. */
+    private int $schoolId;
+
+    /**
+     * The teachers rows behind the demo teacher logins. users.id is NOT a
+     * teacher id any more: pps_classroom_ratings.teacher_id and
+     * pps_teacher_assignments.teacher_id both point at teachers.
+     *
+     * @var Collection<int, Teacher>
+     */
+    private Collection $teacherRecords;
+
+    /**
+     * Exam component x subject pairs an enrolled student can be scored on,
+     * memoised per class_level. Replaces the free-text pps_assessments rows the
+     * demo used to write: a mark is now (component, student, subject), and the
+     * class it belongs to is reached through pps_exam_class_map.
+     *
+     * @var array<int, array<int, object>>
+     */
+    private array $markTargets = [];
     private const GIVEN_NAMES = [
         // Female names
         'Amina', 'Nusrat', 'Ishrat', 'Maliha', 'Samia', 'Raisa', 'Faria', 'Tuba', 'Orin', 'Sabrina',
@@ -49,24 +74,35 @@ class PpsDemoSeeder extends Seeder
     public function run(): void
     {
         SchoolPpsConfig::current();
+
+        // Builds the school, levels, versions, academic year, class_levels,
+        // section_names, sections, subjects and mid-term exams this seeder hangs
+        // everything off. Idempotent, so calling it here keeps PpsDemoSeeder
+        // runnable on its own.
         $this->call(PpsAdministrationSeeder::class);
 
+        $this->schoolId = PpsAdministrationSeeder::school()->id;
+
         User::query()->firstOrCreate(['email' => 'admin@pps.local'], [
+            'school_id' => $this->schoolId,
             'name' => 'System Admin', 'role' => 'admin',
             'password' => Hash::make(self::DEMO_PASSWORD),
         ]);
 
         $principal = User::query()->firstOrCreate(['email' => 'principal@pps.local'], [
+            'school_id' => $this->schoolId,
             'name' => 'Principal User', 'role' => 'principal',
             'password' => Hash::make(self::DEMO_PASSWORD),
         ]);
 
         $counselor = User::query()->firstOrCreate(['email' => 'counselor@pps.local'], [
+            'school_id' => $this->schoolId,
             'name' => 'Counselor User', 'role' => 'counselor',
             'password' => Hash::make(self::DEMO_PASSWORD),
         ]);
 
         User::query()->firstOrCreate(['email' => 'welfare@pps.local'], [
+            'school_id' => $this->schoolId,
             'name' => 'Welfare Officer', 'role' => 'welfare_officer',
             'password' => Hash::make(self::DEMO_PASSWORD),
         ]);
@@ -79,10 +115,21 @@ class PpsDemoSeeder extends Seeder
             ['name' => 'Nargis Sultana',  'email' => 'teacher.social@pps.local'],
         ])->map(fn (array $t) => User::query()->firstOrCreate(
             ['email' => $t['email']],
-            ['name' => $t['name'], 'role' => 'teacher', 'password' => Hash::make(self::DEMO_PASSWORD)],
+            [
+                'school_id' => $this->schoolId,
+                'name' => $t['name'], 'role' => 'teacher',
+                'password' => Hash::make(self::DEMO_PASSWORD),
+            ],
         ))->values();
 
-        $this->seedTeacherAssignments($teachers);
+        // A teacher is now a person on staff, distinct from the login. Every
+        // demo teacher login gets one, because assignments and classroom
+        // ratings point at it rather than at users.id.
+        $this->teacherRecords = $teachers
+            ->map(fn (User $user) => PpsAdministrationSeeder::teacherFor($user))
+            ->values();
+
+        $this->seedTeacherAssignments($this->teacherRecords);
 
         // ── 8 featured students covering every meaningful profile ──────────────
         $featured = [
@@ -279,11 +326,12 @@ class PpsDemoSeeder extends Seeder
         ];
 
         foreach ($featured as $profile) {
+            // class_name / section are no longer columns: they are the
+            // enrollment made straight after this insert.
             $student = Student::query()->create([
+                'school_id'                   => $this->schoolId,
                 'student_code'                => $profile['student_code'],
                 'name'                        => $profile['name'],
-                'class_name'                  => $profile['class_name'],
-                'section'                     => $profile['section'],
                 'roll_number'                 => $profile['roll_number'],
                 'admission_date'              => now()->subYears(2)->startOfYear(),
                 'guardian_name'               => $profile['guardian_name'],
@@ -313,9 +361,20 @@ class PpsDemoSeeder extends Seeder
                 'confidential_context'        => $profile['confidential_context'],
             ]);
 
+            PpsAdministrationSeeder::enroll(
+                $student,
+                $profile['class_name'],
+                $profile['section'],
+                $profile['roll_number'],
+            );
+
             User::query()->firstOrCreate(
                 ['email' => $profile['guardian_email']],
-                ['name' => $profile['guardian_name'], 'role' => 'guardian', 'password' => Hash::make(self::DEMO_PASSWORD)],
+                [
+                    'school_id' => $this->schoolId,
+                    'name' => $profile['guardian_name'], 'role' => 'guardian',
+                    'password' => Hash::make(self::DEMO_PASSWORD),
+                ],
             );
 
             $this->seedStudentDataset($student, $profile['seed_type'], $teachers, $principal, $counselor);
@@ -378,10 +437,9 @@ class PpsDemoSeeder extends Seeder
                     $secondGuardian = $this->secondGuardianForBulk($roll, $studentIndex, $familyStatus, $guardianProfile);
 
                     $student = Student::query()->create([
+                        'school_id'                   => $this->schoolId,
                         'student_code'                => sprintf('PPS-%03d', $studentIndex),
                         'name'                        => $studentName,
-                        'class_name'                  => $className,
-                        'section'                     => $section,
                         'roll_number'                 => $roll,
                         'admission_date'              => now()->subYears(
                             (int) ($className) - 5 + ($studentIndex % 2)
@@ -416,9 +474,12 @@ class PpsDemoSeeder extends Seeder
                         'confidential_context'        => $confidentialContext,
                     ]);
 
+                    PpsAdministrationSeeder::enroll($student, $className, $section, $roll);
+
                     User::query()->firstOrCreate(
                         ['email' => $student->guardian_email],
                         [
+                            'school_id' => $this->schoolId,
                             'name'     => $guardianName,
                             'role'     => 'guardian',
                             'password' => Hash::make(self::DEMO_PASSWORD),
@@ -954,68 +1015,42 @@ class PpsDemoSeeder extends Seeder
             ['name' => 'Bangla',      'teacher' => $teachers[3]],
         ];
 
-        // 6 assessment types × 2 results each per subject
-        // Types: quiz, spot_test, class_test, assessment_test, midterm, final
-        $assessmentMatrix = [
-            // [type, total_marks, base_day_offset, term]
-            ['quiz',            20,  2, 'T1'],
-            ['quiz',            20,  9, 'T1'],
-            ['spot_test',       30,  4, 'T1'],
-            ['spot_test',       30, 11, 'T1'],
-            ['class_test',      50, 16, 'T1'],
-            ['class_test',      50, 22, 'T2'],
-            ['assessment_test', 75, 18, 'T1'],
-            ['assessment_test', 75, 20, 'T2'],
-            ['midterm',        100,  5, 'T1'],
-            ['midterm',        100,  5, 'T2'],
-            ['final',          100, 15, 'T1'],
-        ];
+        // Academic records. pps_assessments — a free-text (subject,
+        // assessment_type, total_marks) row per student — is gone; a result is
+        // now a pps_marks row against a concrete exam component and a
+        // subjects.id. Which components apply is not a per-student choice any
+        // more: it is whatever pps_exam_class_map scopes to the class the
+        // student is enrolled in, so the matrix below is read from the exams
+        // PpsAdministrationSeeder and PpsExamSeeder created rather than
+        // hard-coded here.
+        $enteredBy = $teachers[$id % count($teachers->all())]->id;
 
-        // Reference date anchors: T1 = 4 months ago, T2 = 1 month ago
-        $termDates = [
-            'T1' => now()->copy()->subMonths(4),
-            'T2' => now()->copy()->subMonths(1),
-        ];
+        foreach ($this->markTargetsFor($student) as $index => $target) {
+            $max      = (float) $target->max_raw_marks;
+            $baseScore = $this->seedScoreForSubject($seedType, $target->subject_name, 0, $id);
+            // Same deterministic per-record noise the assessment matrix used.
+            $noise    = (int) (($id * ($index + 1) * 7) % 11) - 5;
+            $obtained = max(0.0, min($max, round($baseScore / 100 * $max + $noise, 2)));
 
-        foreach ($subjects as $si => $subject) {
-            foreach ($assessmentMatrix as $ai => [$type, $totalMarks, $dayOffset, $term]) {
-                $baseScore = $this->seedScoreForSubject($seedType, $subject['name'], 0, $id);
-                // Add slight noise per record so 2 results of each type differ
-                $noise     = (int)(($id * ($ai + 1) * 7 + $si * 13) % 11) - 5;
-                $obtained  = max(0, min($totalMarks, (int)round($baseScore / 100 * $totalMarks + $noise)));
-                $pct       = $totalMarks > 0 ? round($obtained / $totalMarks * 100, 1) : 0;
-
-                $subjectDayShift = match ($subject['name']) {
-                    'Mathematics' => 0,
-                    'English'     => 1,
-                    'Science'     => 2,
-                    default       => 3,
-                };
-
-                Assessment::query()->create([
-                    'student_id'      => $student->id,
-                    'teacher_id'      => $subject['teacher']->id,
-                    'subject'         => $subject['name'],
-                    'assessment_type' => $type,
-                    'term'            => now()->format('Y') . '-' . $term,
-                    'marks_obtained'  => $obtained,
-                    'total_marks'     => $totalMarks,
-                    'percentage'      => $pct,
-                    'exam_date'       => $termDates[$term]->copy()->day(
-                        min(28, $dayOffset + $subjectDayShift)
-                    )->toDateString(),
-                    'remarks'         => $this->assessmentRemark($seedType, $subject['name']),
-                ]);
-            }
+            Mark::query()->updateOrCreate(
+                [
+                    'component_id' => $target->component_id,
+                    'student_id'   => $student->id,
+                    'subject_id'   => $target->subject_id,
+                ],
+                ['marks_obtained' => $obtained, 'entered_by' => $enteredBy],
+            );
         }
 
         // Classroom ratings — keep 3 monthly snapshots
         foreach ([-2, -1, 0] as $monthOffset) {
             $date = now()->copy()->addMonths($monthOffset);
+            $teacherCount = $this->teacherRecords->count();
 
             ClassroomRating::query()->create([
                 'student_id'     => $student->id,
-                'teacher_id'     => $teachers[((($id + $monthOffset) % count($teachers->all()) + count($teachers->all())) % count($teachers->all()))]->id,
+                // pps_classroom_ratings.teacher_id points at teachers, not users.
+                'teacher_id'     => $this->teacherRecords[((($id + $monthOffset) % $teacherCount + $teacherCount) % $teacherCount)]->id,
                 'subject'        => $subjects[((($id + $monthOffset) % count($subjects) + count($subjects)) % count($subjects))]['name'],
                 'rating_period'  => $date->copy()->startOfMonth()->addDays(6)->toDateString(),
                 'period_type'    => 'monthly',
@@ -1235,21 +1270,6 @@ class PpsDemoSeeder extends Seeder
         };
     }
 
-    private function assessmentRemark(string $seedType, string $subject): ?string
-    {
-        if (in_array($seedType, ['good', 'strong', 'recovering'], true)) {
-            return null;
-        }
-
-        return match ($seedType) {
-            'urgent'         => "Requires individual support plan for {$subject}.",
-            'attendance_crisis' => null,
-            'academic_crisis'=> "Consistent below-average performance in {$subject}. Review recommended.",
-            'warning'        => "Declining trend in {$subject} over two consecutive assessments.",
-            default          => null,
-        };
-    }
-
     private function absenceReason(string $seedType): string
     {
         return match ($seedType) {
@@ -1421,64 +1441,124 @@ class PpsDemoSeeder extends Seeder
 
     // ── Teacher assignments ────────────────────────────────────────────────────
 
-    private function seedTeacherAssignments($teachers): void
+    /**
+     * pps_teacher_assignments is now (teacher_id -> teachers, section_id ->
+     * sections, subject_id -> subjects). The class/section/subject strings the
+     * matrix used to store are resolved here into those three ids; subjects are
+     * named by short_name because subjects has no `name` column.
+     *
+     * @param  Collection<int, Teacher>  $teacherRecords
+     */
+    private function seedTeacherAssignments(Collection $teacherRecords): void
     {
         $matrix = [
             [
-                'teacher' => $teachers[0], // Mariam Rahman - Math
+                'teacher' => $teacherRecords[0], // Mariam Rahman - Math
                 'assignments' => [
-                    ['class_name' => '8', 'section' => 'A', 'subject' => 'Mathematics', 'is_class_teacher' => true],
-                    ['class_name' => '9', 'section' => 'A', 'subject' => 'Mathematics', 'is_class_teacher' => false],
-                    ['class_name' => '10','section' => 'A', 'subject' => 'Mathematics', 'is_class_teacher' => false],
-                    ['class_name' => '10','section' => 'B', 'subject' => 'Mathematics', 'is_class_teacher' => false],
+                    ['class_name' => '8', 'section' => 'A', 'subject' => 'MTH', 'is_class_teacher' => true],
+                    ['class_name' => '9', 'section' => 'A', 'subject' => 'MTH', 'is_class_teacher' => false],
+                    ['class_name' => '10','section' => 'A', 'subject' => 'MTH', 'is_class_teacher' => false],
+                    ['class_name' => '10','section' => 'B', 'subject' => 'MTH', 'is_class_teacher' => false],
                 ],
             ],
             [
-                'teacher' => $teachers[1], // Sabbir Hasan - English
+                'teacher' => $teacherRecords[1], // Sabbir Hasan - English
                 'assignments' => [
-                    ['class_name' => '7', 'section' => 'B', 'subject' => 'English', 'is_class_teacher' => true],
-                    ['class_name' => '8', 'section' => 'A', 'subject' => 'English', 'is_class_teacher' => false],
-                    ['class_name' => '9', 'section' => 'B', 'subject' => 'English', 'is_class_teacher' => false],
+                    ['class_name' => '7', 'section' => 'B', 'subject' => 'ENG', 'is_class_teacher' => true],
+                    ['class_name' => '8', 'section' => 'A', 'subject' => 'ENG', 'is_class_teacher' => false],
+                    ['class_name' => '9', 'section' => 'B', 'subject' => 'ENG', 'is_class_teacher' => false],
                 ],
             ],
             [
-                'teacher' => $teachers[2], // Tahmina Akter - Science
+                'teacher' => $teacherRecords[2], // Tahmina Akter - Science
                 'assignments' => [
-                    ['class_name' => '6', 'section' => 'A', 'subject' => 'Science', 'is_class_teacher' => true],
-                    ['class_name' => '8', 'section' => 'A', 'subject' => 'Science', 'is_class_teacher' => false],
-                    ['class_name' => '10','section' => 'A', 'subject' => 'Science', 'is_class_teacher' => false],
+                    ['class_name' => '6', 'section' => 'A', 'subject' => 'SCIENCE', 'is_class_teacher' => true],
+                    ['class_name' => '8', 'section' => 'A', 'subject' => 'SCIENCE', 'is_class_teacher' => false],
+                    ['class_name' => '10','section' => 'A', 'subject' => 'SCIENCE', 'is_class_teacher' => false],
                 ],
             ],
             [
-                'teacher' => $teachers[3], // Jalal Uddin - Bangla
+                'teacher' => $teacherRecords[3], // Jalal Uddin - Bangla
                 'assignments' => [
-                    ['class_name' => '6', 'section' => 'B', 'subject' => 'Bangla', 'is_class_teacher' => true],
-                    ['class_name' => '7', 'section' => 'A', 'subject' => 'Bangla', 'is_class_teacher' => false],
-                    ['class_name' => '8', 'section' => 'B', 'subject' => 'Bangla', 'is_class_teacher' => false],
+                    ['class_name' => '6', 'section' => 'B', 'subject' => 'BAN', 'is_class_teacher' => true],
+                    ['class_name' => '7', 'section' => 'A', 'subject' => 'BAN', 'is_class_teacher' => false],
+                    ['class_name' => '8', 'section' => 'B', 'subject' => 'BAN', 'is_class_teacher' => false],
                 ],
             ],
             [
-                'teacher' => $teachers[4], // Nargis Sultana - Social Studies
+                'teacher' => $teacherRecords[4], // Nargis Sultana - Social Studies
                 'assignments' => [
-                    ['class_name' => '9', 'section' => 'B', 'subject' => 'Social Studies', 'is_class_teacher' => true],
-                    ['class_name' => '10','section' => 'B', 'subject' => 'Social Studies', 'is_class_teacher' => false],
-                    ['class_name' => '7', 'section' => 'A', 'subject' => 'Social Studies', 'is_class_teacher' => false],
+                    ['class_name' => '9', 'section' => 'B', 'subject' => 'SOC', 'is_class_teacher' => true],
+                    ['class_name' => '10','section' => 'B', 'subject' => 'SOC', 'is_class_teacher' => false],
+                    ['class_name' => '7', 'section' => 'A', 'subject' => 'SOC', 'is_class_teacher' => false],
                 ],
             ],
         ];
 
         foreach ($matrix as $row) {
             foreach ($row['assignments'] as $assignment) {
+                $subject = PpsAdministrationSeeder::findSubject($assignment['subject']);
+
                 TeacherAssignment::query()->updateOrCreate(
                     [
                         'teacher_id' => $row['teacher']->id,
-                        'class_name' => $assignment['class_name'],
-                        'section'    => $assignment['section'],
-                        'subject'    => $assignment['subject'],
+                        'section_id' => PpsAdministrationSeeder::section(
+                            $assignment['class_name'],
+                            $assignment['section'],
+                        )->id,
+                        'subject_id' => $subject?->id,
                     ],
-                    ['is_class_teacher' => $assignment['is_class_teacher']],
+                    [
+                        'school_id' => $this->schoolId,
+                        'is_class_teacher' => $assignment['is_class_teacher'],
+                    ],
                 );
             }
         }
+    }
+
+    // ── Marks ──────────────────────────────────────────────────────────────────
+
+    /**
+     * The (component, subject) pairs a student can be scored on: every subject
+     * an exam covering their class is mapped to, crossed with that exam's
+     * components. Memoised per class_level, because every student in a class
+     * shares the same set.
+     *
+     * A student with no current enrollment has no class and therefore no marks
+     * — there is no longer a students.class_name to fall back on.
+     *
+     * @return array<int, object>
+     */
+    private function markTargetsFor(Student $student): array
+    {
+        // Read the chain directly rather than through the currentEnrollment
+        // relation: the student model was instantiated before it was enrolled,
+        // so a lazily-loaded relation could still be cached as null.
+        $classLevelId = DB::table('student_enrollments as se')
+            ->join('academic_years as ay', 'ay.id', '=', 'se.academic_year_id')
+            ->join('sections as sec', 'sec.id', '=', 'se.section_id')
+            ->where('se.student_id', $student->id)
+            ->where('ay.is_current', true)
+            ->value('sec.class_level_id');
+
+        if ($classLevelId === null) {
+            return [];
+        }
+
+        $classLevelId = (int) $classLevelId;
+
+        return $this->markTargets[$classLevelId] ??= DB::table('pps_exam_class_map as m')
+            ->join('pps_exams as e', 'e.id', '=', 'm.exam_id')
+            ->join('pps_exam_components as c', 'c.exam_id', '=', 'e.id')
+            ->join('subjects as s', 's.id', '=', 'm.subject_id')
+            ->where('m.class_level_id', $classLevelId)
+            ->where('e.is_active', true)
+            ->orderBy('e.id')
+            ->orderBy('c.sort_order')
+            ->orderBy('s.id')
+            ->select('c.id as component_id', 'c.max_raw_marks', 'm.subject_id', 's.full_name as subject_name')
+            ->get()
+            ->all();
     }
 }

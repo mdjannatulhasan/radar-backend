@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Models\Pps\ExamComponent;
 use App\Models\Pps\Mark;
 use App\Services\Pps\ComputedScoreService;
+use Illuminate\Database\Query\Builder;
+use Illuminate\Database\Query\JoinClause;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -15,6 +17,32 @@ class ResultSummaryController extends Controller
     public function __construct(
         private readonly ComputedScoreService $scorer,
     ) {
+    }
+
+    /**
+     * Join a computed-scores query out to the class and section a student sits
+     * in. students.class_name / students.section are gone; the only route is
+     * the CURRENT academic year's enrollment -> section -> class_level, so the
+     * two strings the results screen filters on are now `cl.name` and `sn.name`.
+     *
+     * student_enrollments is unique on (student_id, academic_year_id) and only
+     * one academic year is current, so this join cannot fan a student out into
+     * several rows. A student with no current enrollment drops out of the
+     * result set — they have no class to be ranked within.
+     */
+    private function scoresWithTaxonomy(int $examId): Builder
+    {
+        return DB::table('pps_computed_scores as cs')
+            ->join('students as s', 's.id', '=', 'cs.student_id')
+            ->join('subjects as sub', 'sub.id', '=', 'cs.subject_id')
+            ->join('student_enrollments as se', 'se.student_id', '=', 's.id')
+            ->join('academic_years as ay', function (JoinClause $join): void {
+                $join->on('ay.id', '=', 'se.academic_year_id')->where('ay.is_current', true);
+            })
+            ->join('sections as sec', 'sec.id', '=', 'se.section_id')
+            ->join('class_levels as cl', 'cl.id', '=', 'sec.class_level_id')
+            ->join('section_names as sn', 'sn.id', '=', 'sec.section_name_id')
+            ->where('cs.exam_id', $examId);
     }
 
     /**
@@ -29,11 +57,14 @@ class ResultSummaryController extends Controller
 
         $examId = (int) $data['exam_id'];
 
-        $rows = DB::table('pps_computed_scores as cs')
-            ->join('students as s', 's.id', '=', 'cs.student_id')
-            ->join('pps_subjects as sub', 'sub.id', '=', 'cs.subject_id')
-            ->where('cs.exam_id', $examId)
-            ->select('s.class_name', 's.section', 'sub.id as subject_id', 'sub.name as subject_name')
+        $rows = $this->scoresWithTaxonomy($examId)
+            ->select(
+                'cl.name as class_name',
+                'sn.name as section',
+                'sub.id as subject_id',
+                // subjects has no `name` column — full_name behind the same key.
+                'sub.full_name as subject_name'
+            )
             ->distinct()
             ->get();
 
@@ -77,7 +108,7 @@ class ResultSummaryController extends Controller
             'exam_id'    => ['required', 'exists:pps_exams,id'],
             'class_name' => ['required', 'string'],
             'section'    => ['nullable', 'string'],
-            'subject_id' => ['nullable', 'integer', 'exists:pps_subjects,id'],
+            'subject_id' => ['nullable', 'integer', 'exists:subjects,id'],
         ]);
 
         $examId    = (int) $data['exam_id'];
@@ -85,14 +116,10 @@ class ResultSummaryController extends Controller
         $section   = $data['section'] ?? null;
         $subjectId = isset($data['subject_id']) ? (int) $data['subject_id'] : null;
 
-        $query = DB::table('pps_computed_scores as cs')
-            ->join('students as s', 's.id', '=', 'cs.student_id')
-            ->join('pps_subjects as sub', 'sub.id', '=', 'cs.subject_id')
-            ->where('cs.exam_id', $examId)
-            ->where('s.class_name', $className);
+        $query = $this->scoresWithTaxonomy($examId)->where('cl.name', $className);
 
         if ($section) {
-            $query->where('s.section', $section);
+            $query->where('sn.name', $section);
         }
         if ($subjectId) {
             $query->where('cs.subject_id', $subjectId);
@@ -104,10 +131,10 @@ class ResultSummaryController extends Controller
                 's.name',
                 's.roll_number',
                 's.student_code',
-                's.class_name',
-                's.section',
+                'cl.name as class_name',
+                'sn.name as section',
                 'cs.subject_id',
-                'sub.name as subject_name',
+                'sub.full_name as subject_name',
                 'cs.total_obtained',
                 'cs.total_possible',
                 'cs.letter_grade',

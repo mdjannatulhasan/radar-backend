@@ -27,18 +27,12 @@ class PpsGradeConfigSeeder extends Seeder
             );
         }
 
-        // Seed default streams
-        $streams = [
-            ['name' => 'Science',    'code' => 'SCI'],
-            ['name' => 'Humanities', 'code' => 'HUM'],
-            ['name' => 'BST',        'code' => 'BST'],
-        ];
-
-        foreach ($streams as $stream) {
-            DB::table('pps_streams')->updateOrInsert(
-                ['code' => $stream['code']],
-                array_merge($stream, ['is_active' => true, 'created_at' => now(), 'updated_at' => now()])
-            );
-        }
+        // The default streams (Science / Humanities / BST) that used to be seeded
+        // into pps_streams are no longer rows: pps_streams and its duplicate
+        // pps_departments collapsed into class_levels.group, a CHECK-constrained
+        // enum of science | humanities | business_studies. The vocabulary is
+        // fixed by the schema, so there is nothing left to seed here — a class's
+        // group is set where the class itself is created, in
+        // PpsAdministrationSeeder::CLASS_LEVELS.
     }
 }

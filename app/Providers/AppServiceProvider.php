@@ -2,13 +2,15 @@
 
 namespace App\Providers;
 
-use App\Models\Student;
 use App\Policies\StudentPolicy;
+use App\Support\PpsPermissions;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
+use SmsCore\Models\Student;
+use SmsCore\Models\User;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -28,6 +30,10 @@ class AppServiceProvider extends ServiceProvider
         $this->loadMigrationsFrom(\SmsCore\SmsCoreServiceProvider::centralMigrationPath());
 
         Gate::policy(Student::class, StudentPolicy::class);
+
+        // sms-core's User has no opinion on RADAR's permission vocabulary; it
+        // asks the product. Without this, every user has zero permissions.
+        User::$permissionResolver = static fn (User $user): array => PpsPermissions::forRole($user->role);
 
         RateLimiter::for('pps-api', function (Request $request): array {
             $identity = $request->user()?->getAuthIdentifier() ?: $request->ip();

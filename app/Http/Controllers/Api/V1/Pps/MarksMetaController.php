@@ -4,12 +4,11 @@ namespace App\Http\Controllers\Api\V1\Pps;
 
 use App\Http\Controllers\Controller;
 use App\Models\Pps\Exam;
-use App\Models\Pps\SchoolClass;
-use App\Models\Pps\Section;
-use App\Models\Pps\Subject;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
+use SmsCore\Models\ClassLevel;
+use SmsCore\Models\SectionName;
+use SmsCore\Models\Subject;
 
 class MarksMetaController extends Controller
 {
@@ -17,6 +16,14 @@ class MarksMetaController extends Controller
      * GET /v1/pps/marks/meta
      *
      * Returns all active non-draft exams with components and full subject list.
+     *
+     * `classes` and `sections` are the vocabulary the marks grid puts in its two
+     * dropdowns and sends back to GET /marks as the `class_name` / `section`
+     * strings. Classes come from class_levels. Sections come from section_names
+     * — the flat name vocabulary that replaced pps_sections — and NOT from the
+     * `sections` table, whose rows are one-per-class-and-name and would put "A"
+     * in the list once per class while carrying an id the string filter cannot
+     * use. Both payload shapes are unchanged: { id, name }.
      */
     public function index(Request $request): JsonResponse
     {
@@ -28,9 +35,20 @@ class MarksMetaController extends Controller
             ->orderBy('title')
             ->get();
 
-        $subjects = Subject::where('is_active', true)->orderBy('name')->get(['id', 'name', 'code']);
-        $classes  = SchoolClass::where('is_active', true)->orderBy('numeric_order')->orderBy('name')->get(['id', 'name']);
-        $sections = Section::where('is_active', true)->orderBy('name')->get(['id', 'name']);
+        // subjects.full_name / short_name are the new columns behind the
+        // unchanged `name` / `code` payload keys.
+        $subjects = Subject::where('is_active', true)
+            ->orderBy('full_name')
+            ->get(['id', 'full_name', 'short_name'])
+            ->map(fn (Subject $subject) => [
+                'id'   => $subject->id,
+                'name' => $subject->full_name,
+                'code' => $subject->short_name,
+            ])
+            ->values();
+
+        $classes  = ClassLevel::where('is_active', true)->orderBy('numeric_order')->orderBy('name')->get(['id', 'name']);
+        $sections = SectionName::query()->orderBy('name')->get(['id', 'name']);
 
         return response()->json([
             'classes'  => $classes,

@@ -17,16 +17,6 @@ class TaxonomyTest extends TestCase
 {
     use RefreshDatabase;
 
-    protected function setUp(): void
-    {
-        parent::setUp();
-
-        $this->markTestSkipped(
-            'Tenant-schema tables do not exist until Task 4.0 wires BootstrapTenancy '
-            .'and Task 4.1 moves RADAR migrations into the tenant path. Un-skip there.'
-        );
-    }
-
     public function test_a_section_resolves_its_full_level_and_version_chain(): void
     {
         $school  = School::create(['name' => 'CPSCS', 'slug' => 'cpscs']);

@@ -4,8 +4,8 @@ namespace Tests\Feature\Pps;
 
 use App\Models\Pps\PerformanceSnapshot;
 use App\Models\Pps\PpsAlert;
-use App\Models\Student;
-use App\Models\User;
+use SmsCore\Models\Student;
+use SmsCore\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
 use Tests\TestCase;
@@ -16,14 +16,14 @@ class DashboardSummaryTest extends TestCase
 
     public function test_dashboard_summary_returns_phase_one_payload(): void
     {
-        $principal = User::query()->create([
+        $principal = $this->createUser([
             'name' => 'Principal',
             'email' => 'principal@example.test',
             'role' => 'principal',
             'password' => Hash::make('password'),
         ]);
 
-        $studentA = Student::query()->create([
+        $studentA = $this->makeStudent([
             'student_code' => 'PPS-001',
             'name' => 'Rafi Islam',
             'class_name' => '8',
@@ -31,7 +31,7 @@ class DashboardSummaryTest extends TestCase
             'roll_number' => 1,
         ]);
 
-        $studentB = Student::query()->create([
+        $studentB = $this->makeStudent([
             'student_code' => 'PPS-002',
             'name' => 'Sadia Rahman',
             'class_name' => '8',
@@ -95,14 +95,14 @@ class DashboardSummaryTest extends TestCase
 
     public function test_alert_can_be_resolved_from_api(): void
     {
-        $teacher = User::query()->create([
+        $teacher = $this->createUser([
             'name' => 'Teacher',
             'email' => 'teacher@example.test',
             'role' => 'teacher',
             'password' => Hash::make('password'),
         ]);
 
-        $student = Student::query()->create([
+        $student = $this->makeStudent([
             'student_code' => 'PPS-003',
             'name' => 'Mariam Akter',
             'class_name' => '7',
@@ -132,7 +132,7 @@ class DashboardSummaryTest extends TestCase
 
     public function test_dashboard_summary_requires_authentication_and_sets_security_headers(): void
     {
-        $principal = User::query()->create([
+        $principal = $this->createUser([
             'name' => 'Principal Secure',
             'email' => 'principal-secure@example.test',
             'role' => 'principal',

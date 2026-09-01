@@ -2,7 +2,7 @@
 
 namespace Tests\Feature\Pps;
 
-use App\Models\User;
+use SmsCore\Models\User;
 use App\Support\PpsPermissions;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
@@ -15,7 +15,7 @@ class AuthFlowTest extends TestCase
 
     public function test_user_can_log_in_fetch_profile_and_log_out_with_sanctum(): void
     {
-        $user = User::query()->create([
+        $user = $this->createUser([
             'name' => 'Principal User',
             'email' => 'principal@example.test',
             'role' => 'principal',
@@ -52,14 +52,14 @@ class AuthFlowTest extends TestCase
 
     public function test_teacher_and_counselor_receive_accessible_home_paths(): void
     {
-        $teacher = User::query()->create([
+        $teacher = $this->createUser([
             'name' => 'Teacher User',
             'email' => 'teacher@example.test',
             'role' => 'teacher',
             'password' => Hash::make('secret-password'),
         ]);
 
-        $counselor = User::query()->create([
+        $counselor = $this->createUser([
             'name' => 'Counselor User',
             'email' => 'counselor@example.test',
             'role' => 'counselor',

@@ -4,7 +4,7 @@ namespace App\Http\Controllers\Api\V1\Pps;
 
 use App\Http\Controllers\Controller;
 use App\Models\Pps\PpsNotice;
-use App\Models\Student;
+use SmsCore\Models\Student;
 use App\Support\PpsPermissions;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;

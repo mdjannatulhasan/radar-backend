@@ -15,6 +15,15 @@ class Student extends Model
 
     protected $guarded = [];
 
+    /**
+     * class_name and section_name are derived (see the accessors below) but are
+     * appended so that a serialised student still answers "which class?" — the
+     * question every RADAR payload asks. Callers that serialise many students
+     * should eager-load App\Support\StudentTaxonomyFilter::eagerLoad() so the
+     * accessors read from memory rather than issuing a query per row.
+     */
+    protected $appends = ['class_name', 'section_name'];
+
     protected function casts(): array
     {
         return [
@@ -40,5 +49,31 @@ class Student extends Model
     {
         return $this->hasOne(StudentEnrollment::class)
             ->whereHas('academicYear', fn ($q) => $q->where('is_current', true));
+    }
+
+    /**
+     * Derived, read-only conveniences for the three taxonomy facts almost every
+     * caller wants. They are NOT columns — the old denormalised
+     * students.class_name / students.section strings are gone — so each one
+     * walks currentEnrollment -> section -> class_level. Deliberately kept out
+     * of $appends: a caller that serialises many students must eager-load that
+     * chain (see App\Support\StudentTaxonomyFilter::eagerLoad) rather than pay
+     * a query per row.
+     */
+    public function getSectionIdAttribute(): ?int
+    {
+        $id = $this->currentEnrollment?->section_id;
+
+        return $id === null ? null : (int) $id;
+    }
+
+    public function getClassNameAttribute(): ?string
+    {
+        return $this->currentEnrollment?->section?->classLevel?->name;
+    }
+
+    public function getSectionNameAttribute(): ?string
+    {
+        return $this->currentEnrollment?->section?->sectionName?->name;
     }
 }
