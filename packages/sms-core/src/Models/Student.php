@@ -22,7 +22,7 @@ class Student extends Model
      * should eager-load App\Support\StudentTaxonomyFilter::eagerLoad() so the
      * accessors read from memory rather than issuing a query per row.
      */
-    protected $appends = ['class_name', 'section_name'];
+    protected $appends = ['class_name', 'section_name', 'section'];
 
     protected function casts(): array
     {
@@ -75,5 +75,18 @@ class Student extends Model
     public function getSectionNameAttribute(): ?string
     {
         return $this->currentEnrollment?->section?->sectionName?->name;
+    }
+
+    /**
+     * Alias of section_name, kept because `student.section` is the field name
+     * ~19 frontend call sites already read — dashboard, alert queue,
+     * notifications, reports, parent report, student profile, tuition batches,
+     * admin workspace and the teacher forms. Renaming all of them to
+     * section_name would be churn for no gain: on a student, "section" meaning
+     * the section's name is exactly right.
+     */
+    public function getSectionAttribute(): ?string
+    {
+        return $this->getSectionNameAttribute();
     }
 }
