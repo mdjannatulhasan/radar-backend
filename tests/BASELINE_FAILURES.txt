@@ -1,0 +1,18 @@
+admin panel view denied for non admin
+class analytics endpoint returns summary and ranking
+it calculates snapshot scores from domain records
+marks read allowed for teacher and principal
+marks read denied for guardian and counselor
+principal cannot compute results
+principal cannot manage assessments
+principal cannot write marks
+score recalculation creates alert when thresholds are crossed
+student profile endpoint returns phase two payload
+superadmin can manage admin catalog and students
+teacher and counselor receive accessible home paths
+teacher bulk import accepts student codes only for assigned scope
+teacher can access assessments
+teacher can write marks
+teacher effectiveness includes previous average for trend rendering
+unauthenticated request is rejected
+user can log in fetch profile and log out with sanctum
