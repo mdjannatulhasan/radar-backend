@@ -11,7 +11,7 @@ return new class extends Migration
         Schema::create('pps_classroom_ratings', function (Blueprint $table): void {
             $table->id();
             $table->foreignId('student_id')->constrained()->cascadeOnDelete();
-            $table->foreignId('teacher_id')->nullable()->constrained('users')->nullOnDelete();
+            $table->foreignId('teacher_id')->nullable()->constrained('teachers')->nullOnDelete();
             $table->string('subject', 100)->nullable();
             $table->date('rating_period');
             $table->string('period_type', 20)->default('weekly');

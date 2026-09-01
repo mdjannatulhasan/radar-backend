@@ -9,7 +9,7 @@ return new class extends Migration {
             $table->id();
             $table->foreignId('component_id')->constrained('pps_exam_components')->cascadeOnDelete();
             $table->foreignId('student_id')->constrained('students')->cascadeOnDelete();
-            $table->foreignId('subject_id')->constrained('pps_subjects')->cascadeOnDelete();
+            $table->foreignId('subject_id')->constrained('subjects')->cascadeOnDelete();
             $table->decimal('marks_obtained', 8, 2);
             $table->foreignId('entered_by')->nullable()->constrained('users')->nullOnDelete();
             $table->timestamp('recorded_at')->useCurrent();

@@ -9,7 +9,7 @@ return new class extends Migration {
             $table->id();
             $table->foreignId('exam_id')->constrained('pps_exams')->cascadeOnDelete();
             $table->foreignId('student_id')->constrained('students')->cascadeOnDelete();
-            $table->foreignId('subject_id')->constrained('pps_subjects')->cascadeOnDelete();
+            $table->foreignId('subject_id')->constrained('subjects')->cascadeOnDelete();
             $table->decimal('total_obtained', 8, 2);
             $table->decimal('total_possible', 8, 2);
             $table->decimal('percentage', 5, 2);
