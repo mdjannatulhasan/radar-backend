@@ -77,6 +77,17 @@ class SubdomainTenancyTest extends TestCase
             ->assertJson(['tenant' => 'cpscs']);
     }
 
+    public function test_lookalike_domain_is_rejected(): void
+    {
+        Tenant::create(['id' => 'cpscs', 'name' => 'CPSCS', 'slug' => 'cpscs', 'provisioning_status' => 'ready']);
+
+        // Literally ends with "radar.test" but is NOT a subdomain of it.
+        // A bare Str::endsWith check would resolve tenant cpscs here.
+        $this->getJson('http://cpscs.attackerradar.test/_tenancy-probe')
+            ->assertNotFound()
+            ->assertJson(['message' => 'Unknown tenant.']);
+    }
+
     public function test_third_party_domain_is_rejected(): void
     {
         Tenant::create(['id' => 'cpscs', 'name' => 'CPSCS', 'slug' => 'cpscs', 'provisioning_status' => 'ready']);

@@ -77,7 +77,13 @@ class InitializeTenancyBySubdomain
         // Only treat the first label as a slug when the host actually sits
         // under one of our central domains — otherwise an attacker-controlled
         // third-party domain could aim at a tenant schema.
-        if (! Str::endsWith($host, $central)) {
+        //
+        // The '.' prefix is load-bearing: a bare suffix check would accept
+        // cpscs.attackerradar.test as a subdomain of radar.test, because that
+        // string does literally end with "radar.test".
+        $suffixes = array_map(static fn (string $d): string => '.'.$d, $central);
+
+        if (! Str::endsWith($host, $suffixes)) {
             return null;
         }
 
