@@ -2,14 +2,12 @@
 
 namespace Tests\Feature\Pps;
 
-use App\Models\Pps\Assessment;
+use App\Models\Pps\AttendanceRecord;
 use App\Models\Pps\ClassroomRating;
 use App\Models\Pps\Extracurricular;
 use App\Models\Pps\PerformanceSnapshot;
 use App\Models\Pps\PpsAlert;
 use App\Models\Pps\SchoolPpsConfig;
-use SmsCore\Models\Student;
-use SmsCore\Models\User;
 use App\Services\Pps\ScoreCalculatorService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
@@ -89,17 +87,7 @@ class PhaseExpansionTest extends TestCase
             ],
         ]);
 
-        Assessment::query()->create([
-            'student_id' => $student->id,
-            'teacher_id' => $teacher->id,
-            'subject' => 'Mathematics',
-            'assessment_type' => 'class_test',
-            'term' => '2026-term-1',
-            'marks_obtained' => 41,
-            'total_marks' => 100,
-            'percentage' => 41,
-            'exam_date' => '2026-04-11',
-        ]);
+        $this->recordExamResult($student, 'Mathematics', '2026-04-11', 41, $teacher->id);
 
         $this->assignTeacher($teacher, '8', 'A', 'Mathematics');
 
@@ -208,17 +196,7 @@ class PhaseExpansionTest extends TestCase
                 'calculated_at' => now(),
             ]);
 
-            Assessment::query()->create([
-                'student_id' => $student->id,
-                'teacher_id' => $teacher->id,
-                'subject' => 'Mathematics',
-                'assessment_type' => 'class_test',
-                'term' => '2026-term-1',
-                'marks_obtained' => $academic,
-                'total_marks' => 100,
-                'percentage' => $academic,
-                'exam_date' => '2026-04-10',
-            ]);
+            $this->recordExamResult($student, 'Mathematics', '2026-04-10', $academic, $teacher->id);
         }
 
         $this->assignTeacher($teacher, '9', 'A', 'Mathematics', isClassTeacher: true);
@@ -344,29 +322,10 @@ class PhaseExpansionTest extends TestCase
             'roll_number' => 6,
         ]);
 
-        Assessment::query()->create([
-            'student_id' => $student->id,
-            'teacher_id' => $teacher->id,
-            'subject' => 'Mathematics',
-            'assessment_type' => 'class_test',
-            'term' => '2026-term-1',
-            'marks_obtained' => 68,
-            'total_marks' => 100,
-            'percentage' => 68,
-            'exam_date' => '2026-03-10',
-        ]);
+        $this->assignTeacher($teacher, '9', 'A', 'Mathematics');
 
-        Assessment::query()->create([
-            'student_id' => $student->id,
-            'teacher_id' => $teacher->id,
-            'subject' => 'Mathematics',
-            'assessment_type' => 'class_test',
-            'term' => '2026-term-1',
-            'marks_obtained' => 74,
-            'total_marks' => 100,
-            'percentage' => 74,
-            'exam_date' => '2026-04-10',
-        ]);
+        $this->recordExamResult($student, 'Mathematics', '2026-03-10', 68, $teacher->id);
+        $this->recordExamResult($student, 'Mathematics', '2026-04-10', 74, $teacher->id);
 
         $this->signInPps($principal)
             ->getJson('/api/v1/pps/teachers/effectiveness?period=2026-04')
@@ -418,19 +377,10 @@ class PhaseExpansionTest extends TestCase
             'calculated_at' => now(),
         ]);
 
-        \App\Models\Pps\Assessment::query()->create([
-            'student_id' => $student->id,
-            'subject' => 'Mathematics',
-            'assessment_type' => 'class_test',
-            'term' => '2026-term-1',
-            'marks_obtained' => 28,
-            'total_marks' => 100,
-            'percentage' => 28,
-            'exam_date' => '2026-04-12',
-        ]);
+        $this->recordExamResult($student, 'Mathematics', '2026-04-12', 28);
 
         foreach (range(1, 10) as $day) {
-            \App\Models\Pps\AttendanceRecord::query()->create([
+            AttendanceRecord::query()->create([
                 'student_id' => $student->id,
                 'date' => sprintf('2026-04-%02d', $day),
                 'status' => $day <= 6 ? 'absent' : 'present',

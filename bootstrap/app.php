@@ -30,6 +30,39 @@ return Application::configure(basePath: dirname(__DIR__))
             'pps.security' => \App\Http\Middleware\PpsSecurityMiddleware::class,
             'pps.can' => \App\Http\Middleware\PpsCapabilityMiddleware::class,
         ]);
+
+        // Tenancy MUST run before authentication.
+        //
+        // Laravel sorts a route's middleware by this list, and anything absent
+        // from it is pushed behind everything present. `tenant` and `product`
+        // were absent, so `auth:sanctum` — which implements
+        // AuthenticatesRequests — ran first, on the central `public` schema.
+        // Sanctum then looked the bearer token up in
+        // public.personal_access_tokens while the token had been minted into
+        // tenant_<slug>.personal_access_tokens by /auth/login (which has no
+        // auth middleware, so tenancy did initialize there). Every
+        // authenticated request on a tenant subdomain came back 401, and the
+        // test suite could not see it because Sanctum::actingAs() bypasses the
+        // token lookup entirely.
+        //
+        // This is Laravel's default priority list with the two tenancy
+        // middleware inserted ahead of AuthenticatesRequests. It is spelled out
+        // in full rather than patched, because the ordering is the point.
+        $middleware->priority([
+            \Illuminate\Foundation\Http\Middleware\HandlePrecognitiveRequests::class,
+            \Illuminate\Cookie\Middleware\EncryptCookies::class,
+            \Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse::class,
+            \Illuminate\Session\Middleware\StartSession::class,
+            \Illuminate\View\Middleware\ShareErrorsFromSession::class,
+            \SmsCore\Http\Middleware\InitializeTenancyBySubdomain::class,
+            \SmsCore\Http\Middleware\EnsureProductEnabled::class,
+            \Illuminate\Contracts\Auth\Middleware\AuthenticatesRequests::class,
+            \Illuminate\Routing\Middleware\ThrottleRequests::class,
+            \Illuminate\Routing\Middleware\ThrottleRequestsWithRedis::class,
+            \Illuminate\Contracts\Session\Middleware\AuthenticatesSessions::class,
+            \Illuminate\Routing\Middleware\SubstituteBindings::class,
+            \Illuminate\Auth\Middleware\Authorize::class,
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //

@@ -35,7 +35,7 @@ class CapabilityMiddlewareTest extends TestCase
     {
         $this->getJson('/api/v1/pps/dashboard/summary')->assertUnauthorized();
         $this->getJson('/api/v1/pps/students')->assertUnauthorized();
-        $this->getJson('/api/v1/pps/marks/term')->assertUnauthorized();
+        $this->getJson('/api/v1/pps/marks')->assertUnauthorized();
     }
 
     // ── dashboard.view ────────────────────────────────────────────────────────
@@ -112,7 +112,7 @@ class CapabilityMiddlewareTest extends TestCase
         // We assert "not 403" to confirm capability check passed.
         foreach (['teacher', 'admin', 'principal', 'superadmin'] as $role) {
             $this->signInPps($this->user($role))
-                ->getJson('/api/v1/pps/marks/term')
+                ->getJson('/api/v1/pps/marks')
                 ->assertStatus(422, "role={$role} should pass marks.read capability (422 = reached controller)");
         }
     }
@@ -121,7 +121,7 @@ class CapabilityMiddlewareTest extends TestCase
     {
         foreach (['guardian', 'counselor', 'welfare_officer'] as $role) {
             $this->signInPps($this->user($role))
-                ->getJson('/api/v1/pps/marks/term')
+                ->getJson('/api/v1/pps/marks')
                 ->assertForbidden("role={$role} must not read marks");
         }
     }
@@ -130,24 +130,33 @@ class CapabilityMiddlewareTest extends TestCase
     {
         // Principal has marks.read but NOT marks.write
         $this->signInPps($this->user('principal'))
-            ->postJson('/api/v1/pps/marks/term', [])
+            ->postJson('/api/v1/pps/marks', [])
             ->assertForbidden();
     }
 
     public function test_teacher_can_write_marks(): void
     {
         $this->signInPps($this->user('teacher'))
-            ->postJson('/api/v1/pps/marks/term', [])
+            ->postJson('/api/v1/pps/marks', [])
             ->assertStatus(422); // reaches controller, fails validation not auth
     }
 
     // ── results ───────────────────────────────────────────────────────────────
 
-    public function test_principal_cannot_compute_results(): void
+    /**
+     * A principal MAY recompute results, and may NOT enter marks.
+     *
+     * ModuleCapabilities::MAP has always said so — `results.compute` lists
+     * principal, `marks.write` does not — and the rule is coherent: computing a
+     * result is an idempotent recalculation from marks that already exist,
+     * while entering a mark is data entry. This test used to assert the
+     * opposite of the MAP; the MAP is the one that is right.
+     */
+    public function test_principal_can_compute_results(): void
     {
         $this->signInPps($this->user('principal'))
             ->postJson('/api/v1/pps/results/compute', [])
-            ->assertForbidden();
+            ->assertStatus(422); // reached the controller: capability passed
     }
 
     public function test_teacher_can_compute_results(): void
@@ -161,11 +170,21 @@ class CapabilityMiddlewareTest extends TestCase
 
     public function test_admin_panel_view_denied_for_non_admin(): void
     {
-        foreach (['principal', 'teacher', 'counselor', 'welfare_officer', 'guardian'] as $role) {
+        // Principal is deliberately absent from this list: the MAP grants them
+        // admin_panel.view (a read-only catalog dump) and withholds
+        // admin_panel.manage. The pair of tests below pins both halves.
+        foreach (['teacher', 'counselor', 'welfare_officer', 'guardian'] as $role) {
             $this->signInPps($this->user($role))
                 ->getJson('/api/v1/pps/admin/overview')
                 ->assertForbidden("role={$role} must not see admin panel");
         }
+    }
+
+    public function test_admin_panel_view_allowed_for_principal(): void
+    {
+        $this->signInPps($this->user('principal'))
+            ->getJson('/api/v1/pps/admin/overview')
+            ->assertOk();
     }
 
     public function test_admin_panel_manage_denied_for_principal(): void
@@ -190,22 +209,6 @@ class CapabilityMiddlewareTest extends TestCase
     {
         $this->signInPps($this->user('teacher'))
             ->postJson('/api/v1/pps/admin/bulk/students', [])
-            ->assertForbidden();
-    }
-
-    // ── assessments.manage ────────────────────────────────────────────────────
-
-    public function test_teacher_can_access_assessments(): void
-    {
-        $this->signInPps($this->user('teacher'))
-            ->getJson('/api/v1/pps/assessments')
-            ->assertStatus(200);
-    }
-
-    public function test_principal_cannot_manage_assessments(): void
-    {
-        $this->signInPps($this->user('principal'))
-            ->getJson('/api/v1/pps/assessments')
             ->assertForbidden();
     }
 

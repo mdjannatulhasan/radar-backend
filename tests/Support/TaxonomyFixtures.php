@@ -4,6 +4,11 @@ declare(strict_types=1);
 
 namespace Tests\Support;
 
+use App\Models\Pps\ComputedScore;
+use App\Models\Pps\Exam;
+use App\Models\Pps\ExamComponent;
+use App\Models\Pps\ExamType;
+use App\Models\Pps\Mark;
 use App\Models\Pps\TeacherAssignment;
 use SmsCore\Models\AcademicYear;
 use SmsCore\Models\ClassLevel;
@@ -177,5 +182,89 @@ trait TaxonomyFixtures
     protected function createUser(array $attributes): User
     {
         return User::create($attributes + ['school_id' => $this->school()->id]);
+    }
+
+    // ── Exams and marks ────────────────────────────────────────────────────────
+
+    protected function examType(string $code = 'class_test', string $name = 'Class Test'): ExamType
+    {
+        return $this->fixtureCache['examType.'.$code] ??= ExamType::firstOrCreate(
+            ['code' => $code],
+            ['name' => $name, 'is_terminal' => false, 'is_system' => true, 'is_active' => true],
+        );
+    }
+
+    /** One exam per date, carrying a single 100-mark written component. */
+    protected function exam(string $examDate, string $code = 'class_test'): Exam
+    {
+        return $this->fixtureCache['exam.'.$code.'.'.$examDate] ??= Exam::create([
+            'exam_type_id' => $this->examType($code)->id,
+            'title' => ucfirst(str_replace('_', ' ', $code))." {$examDate}",
+            'academic_year' => (int) substr($examDate, 0, 4),
+            'term' => 1,
+            'exam_date' => $examDate,
+            'scope' => 'class',
+            'status' => 'published',
+            'is_active' => true,
+        ]);
+    }
+
+    protected function examComponent(Exam $exam, float $maxMarks = 100.0): ExamComponent
+    {
+        return $this->fixtureCache['component.'.$exam->id] ??= ExamComponent::create([
+            'exam_id' => $exam->id,
+            'name' => 'Written',
+            'code' => 'WRITTEN',
+            'max_raw_marks' => $maxMarks,
+            'max_contribution' => $maxMarks,
+            'sort_order' => 1,
+        ]);
+    }
+
+    /**
+     * One subject result for one student, as the schema now expresses it.
+     *
+     * This is the successor to the single `pps_assessments` row fixtures used
+     * to write. That flat row split in two: the raw entry is a `pps_marks` row
+     * against an exam component, and the aggregate the risk engine reads is a
+     * `pps_computed_scores` row — in production written by
+     * ComputedScoreService::recomputeForExamSubject(). Both are created here
+     * because the two are read by different code paths: class analytics and
+     * teacher effectiveness join through Mark, while ScoreCalculatorService
+     * averages ComputedScore.percentage.
+     *
+     * @return array{mark: Mark, score: ComputedScore}
+     */
+    protected function recordExamResult(
+        Student $student,
+        string $subject,
+        string $examDate,
+        float $percentage,
+        ?int $enteredBy = null,
+    ): array {
+        $exam = $this->exam($examDate);
+        $component = $this->examComponent($exam);
+        $subjectModel = $this->subject($subject);
+
+        $mark = Mark::create([
+            'component_id' => $component->id,
+            'student_id' => $student->id,
+            'subject_id' => $subjectModel->id,
+            'marks_obtained' => $percentage / 100 * $component->max_raw_marks,
+            'entered_by' => $enteredBy,
+            'recorded_at' => $examDate,
+        ]);
+
+        $score = ComputedScore::create([
+            'exam_id' => $exam->id,
+            'student_id' => $student->id,
+            'subject_id' => $subjectModel->id,
+            'total_obtained' => $percentage / 100 * $component->max_raw_marks,
+            'total_possible' => $component->max_raw_marks,
+            'percentage' => $percentage,
+            'computed_at' => $examDate,
+        ]);
+
+        return ['mark' => $mark, 'score' => $score];
     }
 }

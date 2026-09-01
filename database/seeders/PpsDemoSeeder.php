@@ -12,6 +12,7 @@ use App\Models\Pps\PpsAlert;
 use App\Models\Pps\PerformanceSnapshot;
 use App\Models\Pps\SchoolPpsConfig;
 use App\Models\Pps\TeacherAssignment;
+use SmsCore\Models\Section;
 use SmsCore\Models\Student;
 use SmsCore\Models\Teacher;
 use SmsCore\Models\User;
@@ -19,11 +20,21 @@ use Carbon\Carbon;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Hash;
 
 class PpsDemoSeeder extends Seeder
 {
-    public const DEMO_PASSWORD = 'PpsDemo2026!';
+    public const DEMO_PASSWORD = PpsAdministrationSeeder::DEMO_PASSWORD;
+
+    /**
+     * Students per demo section.
+     *
+     * Fifteen because roll number IS the academic profile here — roll 1-2 are
+     * the top of the class and roll 14-15 the most at risk, mirroring the
+     * Bangladeshi convention where roll is assigned by exam rank. A smaller
+     * cohort would simply never reach the `urgent` band, and the demo has to
+     * show alerts at every severity.
+     */
+    public const STUDENTS_PER_SECTION = 15;
 
     /** The school every seeded row belongs to. sms-core tables all carry it. */
     private int $schoolId;
@@ -75,70 +86,57 @@ class PpsDemoSeeder extends Seeder
     {
         SchoolPpsConfig::current();
 
-        // Builds the school, levels, versions, academic year, class_levels,
-        // section_names, sections, subjects and mid-term exams this seeder hangs
-        // everything off. Idempotent, so calling it here keeps PpsDemoSeeder
-        // runnable on its own.
+        // Resolves the real school, academic year and demo sections. It creates
+        // no taxonomy: the structure is imported from otoroutine, and inventing
+        // a second school beside it is the bug this rewrite exists to prevent.
         $this->call(PpsAdministrationSeeder::class);
 
         $this->schoolId = PpsAdministrationSeeder::school()->id;
 
-        User::query()->firstOrCreate(['email' => 'admin@pps.local'], [
-            'school_id' => $this->schoolId,
-            'name' => 'System Admin', 'role' => 'admin',
-            'password' => Hash::make(self::DEMO_PASSWORD),
-        ]);
+        // ── Role logins ───────────────────────────────────────────────────────
+        // The import carries only `admin` and `teacher` accounts, and no
+        // superadmin at all — the source's only super_admin was Autoroutine's
+        // own platform account (school_id NULL), correctly excluded from the
+        // tenant. Without these there is no way into the app, and no way to
+        // show the permission model. All DEV/DEMO ONLY.
+        PpsAdministrationSeeder::demoUser('superadmin', 'RADAR Super Admin');
+        PpsAdministrationSeeder::demoUser('admin', 'RADAR Demo Admin');
+        $principal = PpsAdministrationSeeder::demoUser('principal', 'RADAR Demo Principal');
+        $counselor = PpsAdministrationSeeder::demoUser('counselor', 'RADAR Demo Counselor');
+        PpsAdministrationSeeder::demoUser('welfare_officer', 'RADAR Demo Welfare Officer');
 
-        $principal = User::query()->firstOrCreate(['email' => 'principal@pps.local'], [
-            'school_id' => $this->schoolId,
-            'name' => 'Principal User', 'role' => 'principal',
-            'password' => Hash::make(self::DEMO_PASSWORD),
-        ]);
+        // ── Staff ─────────────────────────────────────────────────────────────
+        // Real imported teachers, so real CPSCS names appear on ratings,
+        // attendance and marks rather than five invented ones. A teacher is a
+        // person on staff, distinct from their login: pps_classroom_ratings and
+        // pps_teacher_assignments point at teachers.id, while
+        // pps_attendance.marked_by and pps_marks.entered_by point at users.id,
+        // which is why only teachers that HAVE a login can be used here.
+        $this->teacherRecords = PpsAdministrationSeeder::realTeachers();
 
-        $counselor = User::query()->firstOrCreate(['email' => 'counselor@pps.local'], [
-            'school_id' => $this->schoolId,
-            'name' => 'Counselor User', 'role' => 'counselor',
-            'password' => Hash::make(self::DEMO_PASSWORD),
-        ]);
+        if ($this->teacherRecords->count() < 4) {
+            throw new \RuntimeException(
+                'Fewer than 4 active teachers with logins in this tenant. '
+                .'Run sms:import:otoroutine before seeding demo data.'
+            );
+        }
 
-        User::query()->firstOrCreate(['email' => 'welfare@pps.local'], [
-            'school_id' => $this->schoolId,
-            'name' => 'Welfare Officer', 'role' => 'welfare_officer',
-            'password' => Hash::make(self::DEMO_PASSWORD),
-        ]);
+        /** @var Collection<int, User> $teachers */
+        $teachers = $this->teacherRecords->map(fn (Teacher $t) => $t->user)->values();
 
-        $teachers = collect([
-            ['name' => 'Mariam Rahman',   'email' => 'teacher.math@pps.local'],
-            ['name' => 'Sabbir Hasan',    'email' => 'teacher.english@pps.local'],
-            ['name' => 'Tahmina Akter',   'email' => 'teacher.science@pps.local'],
-            ['name' => 'Jalal Uddin',     'email' => 'teacher.bangla@pps.local'],
-            ['name' => 'Nargis Sultana',  'email' => 'teacher.social@pps.local'],
-        ])->map(fn (array $t) => User::query()->firstOrCreate(
-            ['email' => $t['email']],
-            [
-                'school_id' => $this->schoolId,
-                'name' => $t['name'], 'role' => 'teacher',
-                'password' => Hash::make(self::DEMO_PASSWORD),
-            ],
-        ))->values();
-
-        // A teacher is now a person on staff, distinct from the login. Every
-        // demo teacher login gets one, because assignments and classroom
-        // ratings point at it rather than at users.id.
-        $this->teacherRecords = $teachers
-            ->map(fn (User $user) => PpsAdministrationSeeder::teacherFor($user))
-            ->values();
-
-        $this->seedTeacherAssignments($this->teacherRecords);
+        // One teacher login whose password is known, so the teacher workspace
+        // can actually be demonstrated — every imported teacher's password came
+        // across as an opaque hash from otoroutine.
+        $this->seedDemoTeacher();
 
         // ── 8 featured students covering every meaningful profile ──────────────
         $featured = [
             [
                 'student_code' => 'PPS-DEMO-001',
                 'name'         => 'Rafi Islam',
-                'class_name'   => '8', 'section' => 'A', 'roll_number' => 21,
+                'roll_number' => 21,
                 'guardian_name' => 'Farzana Islam', 'guardian_phone' => '+8801711000001',
-                'guardian_email' => 'guardian.rafi@pps.local',
+                'guardian_email' => 'guardian.rafi@radar.local',
                 'guardian_relation' => 'mother',
                 'guardian_profession' => 'Garment Worker', 'guardian_profession_category' => 'labor',
                 'guardian_time_availability' => 'low',
@@ -160,9 +158,9 @@ class PpsDemoSeeder extends Seeder
             [
                 'student_code' => 'PPS-DEMO-002',
                 'name'         => 'Nabila Sultana',
-                'class_name'   => '7', 'section' => 'B', 'roll_number' => 7,
+                'roll_number' => 7,
                 'guardian_name' => 'Rezaul Karim', 'guardian_phone' => '+8801711000002',
-                'guardian_email' => 'guardian.nabila@pps.local',
+                'guardian_email' => 'guardian.nabila@radar.local',
                 'guardian_relation' => 'father',
                 'guardian_profession' => 'Bank Officer', 'guardian_profession_category' => 'private_sector',
                 'guardian_time_availability' => 'medium',
@@ -182,9 +180,9 @@ class PpsDemoSeeder extends Seeder
             [
                 'student_code' => 'PPS-DEMO-003',
                 'name'         => 'Sadia Akter',
-                'class_name'   => '6', 'section' => 'A', 'roll_number' => 12,
+                'roll_number' => 12,
                 'guardian_name' => 'Mizanur Rahman', 'guardian_phone' => '+8801711000003',
-                'guardian_email' => 'guardian.sadia@pps.local',
+                'guardian_email' => 'guardian.sadia@radar.local',
                 'guardian_relation' => 'father',
                 'guardian_profession' => 'Works Abroad (Remittance)', 'guardian_profession_category' => 'other',
                 'guardian_time_availability' => 'low',
@@ -207,9 +205,9 @@ class PpsDemoSeeder extends Seeder
             [
                 'student_code' => 'PPS-DEMO-004',
                 'name'         => 'Karim Hossain',
-                'class_name'   => '9', 'section' => 'A', 'roll_number' => 14,
+                'roll_number' => 14,
                 'guardian_name' => 'Habibur Rahman', 'guardian_phone' => '+8801756789012',
-                'guardian_email' => 'guardian.karim@pps.local',
+                'guardian_email' => 'guardian.karim@radar.local',
                 'guardian_relation' => 'father',
                 'guardian_profession' => 'Businessman (Wholesale)', 'guardian_profession_category' => 'business',
                 'guardian_time_availability' => 'low',
@@ -229,9 +227,9 @@ class PpsDemoSeeder extends Seeder
             [
                 'student_code' => 'PPS-DEMO-005',
                 'name'         => 'Mehedi Ahmed',
-                'class_name'   => '10', 'section' => 'A', 'roll_number' => 2,
+                'roll_number' => 2,
                 'guardian_name' => 'Kamrun Nahar', 'guardian_phone' => '+8801844332211',
-                'guardian_email' => 'guardian.mehedi@pps.local',
+                'guardian_email' => 'guardian.mehedi@radar.local',
                 'guardian_relation' => 'mother',
                 'guardian_profession' => 'Government School Teacher', 'guardian_profession_category' => 'education',
                 'guardian_time_availability' => 'high',
@@ -254,9 +252,9 @@ class PpsDemoSeeder extends Seeder
             [
                 'student_code' => 'PPS-DEMO-006',
                 'name'         => 'Lubna Chowdhury',
-                'class_name'   => '8', 'section' => 'B', 'roll_number' => 6,
+                'roll_number' => 6,
                 'guardian_name' => 'Hosne Ara Begum', 'guardian_phone' => '+8801966543210',
-                'guardian_email' => 'guardian.lubna@pps.local',
+                'guardian_email' => 'guardian.lubna@radar.local',
                 'guardian_relation' => 'mother',
                 'guardian_profession' => 'Farmer', 'guardian_profession_category' => 'agriculture',
                 'guardian_time_availability' => 'high',
@@ -280,9 +278,9 @@ class PpsDemoSeeder extends Seeder
             [
                 'student_code' => 'PPS-DEMO-007',
                 'name'         => 'Tasneem Hasan',
-                'class_name'   => '6', 'section' => 'B', 'roll_number' => 3,
+                'roll_number' => 3,
                 'guardian_name' => 'Shahadat Hossain', 'guardian_phone' => '+8801612345678',
-                'guardian_email' => 'guardian.tasneem@pps.local',
+                'guardian_email' => 'guardian.tasneem@radar.local',
                 'guardian_relation' => 'father',
                 'guardian_profession' => 'Army Officer', 'guardian_profession_category' => 'military',
                 'guardian_time_availability' => 'low',
@@ -303,9 +301,9 @@ class PpsDemoSeeder extends Seeder
             [
                 'student_code' => 'PPS-DEMO-008',
                 'name'         => 'Nusrat Karim',
-                'class_name'   => '9', 'section' => 'B', 'roll_number' => 9,
+                'roll_number' => 9,
                 'guardian_name' => 'Mahfuz Alam', 'guardian_phone' => '+8801644332211',
-                'guardian_email' => 'guardian.nusrat@pps.local',
+                'guardian_email' => 'guardian.nusrat@radar.local',
                 'guardian_relation' => 'father',
                 'guardian_profession' => 'Rickshaw/Auto Driver', 'guardian_profession_category' => 'labor',
                 'guardian_time_availability' => 'high',
@@ -325,12 +323,26 @@ class PpsDemoSeeder extends Seeder
             ],
         ];
 
-        foreach ($featured as $profile) {
+        // Featured students go into real senior sections — that is where the
+        // exams, marks and risk data they are meant to illustrate live.
+        $featuredSections = PpsAdministrationSeeder::demoSections()
+            ->filter(fn (Section $s) => ($s->classLevel?->numeric_order ?? 0)
+                >= PpsAdministrationSeeder::SENIOR_FROM_NUMERIC_ORDER)
+            ->values();
+
+        if ($featuredSections->isEmpty()) {
+            $featuredSections = PpsAdministrationSeeder::demoSections()->values();
+        }
+
+        foreach ($featured as $featuredIndex => $profile) {
+            $featuredSection = $featuredSections[$featuredIndex % $featuredSections->count()];
+
             // class_name / section are no longer columns: they are the
             // enrollment made straight after this insert.
-            $student = Student::query()->create([
+            $student = Student::query()->updateOrCreate([
                 'school_id'                   => $this->schoolId,
                 'student_code'                => $profile['student_code'],
+            ], [
                 'name'                        => $profile['name'],
                 'roll_number'                 => $profile['roll_number'],
                 'admission_date'              => now()->subYears(2)->startOfYear(),
@@ -363,8 +375,7 @@ class PpsDemoSeeder extends Seeder
 
             PpsAdministrationSeeder::enroll(
                 $student,
-                $profile['class_name'],
-                $profile['section'],
+                $featuredSection,
                 $profile['roll_number'],
             );
 
@@ -373,7 +384,7 @@ class PpsDemoSeeder extends Seeder
                 [
                     'school_id' => $this->schoolId,
                     'name' => $profile['guardian_name'], 'role' => 'guardian',
-                    'password' => Hash::make(self::DEMO_PASSWORD),
+                    'password' => PpsAdministrationSeeder::demoPasswordHash(),
                 ],
             );
 
@@ -388,119 +399,140 @@ class PpsDemoSeeder extends Seeder
             fn (int $m) => now()->subMonths($m)->format('Y-m')
         );
 
-        $classes  = ['6', '7', '8', '9', '10'];
-        $sections = ['A', 'B'];
+        // The demo cohort is drawn from the REAL sections, one per class plus a
+        // second from Class 9 up. Every class in both versions, both levels and
+        // all three College groups gets students, so no filter combination in
+        // the UI lands on an empty roster, while the total stays a size a seed
+        // run and a demo can both carry.
+        $demoSections = PpsAdministrationSeeder::demoSections();
         $studentIndex = 1;
 
-        foreach ($classes as $className) {
-            foreach ($sections as $section) {
-                foreach (range(1, 15) as $roll) {
-                    $seedType  = $this->seedTypeForRoll($roll, $className, $section);
-                    $studentName  = $this->bulkStudentName($studentIndex);
-                    $guardianName = $this->bulkGuardianName($studentIndex);
+        foreach ($demoSections->values() as $sectionIndex => $demoSection) {
+            /** @var Section $demoSection */
+            $classLevel = $demoSection->classLevel;
+            $codePrefix = $this->sectionCodePrefix($demoSection);
 
-                    $guardianProfile = $this->guardianProfileForRoll($roll, $studentIndex);
+            // Admission year tracks how far up the school the class sits:
+            // a Class 10 cohort has been here longer than a Class 1 one.
+            $yearsEnrolled = max(1, min(8, (int) ($classLevel?->numeric_order ?? 5)));
 
-                    // Tuition: top students get enrichment; struggling students get remedial support
-                    $hasTuition = in_array($roll, [1, 2, 10, 11, 12, 13]) || ($studentIndex % 6 === 0);
-                    $tuitionSubjects = $hasTuition ? $this->tuitionSubjectsForRoll($roll, $studentIndex) : [];
+            foreach (range(1, self::STUDENTS_PER_SECTION) as $roll) {
+                $seedType  = $this->seedTypeForRoll($roll, $sectionIndex);
+                $studentName  = $this->bulkStudentName($studentIndex);
+                $guardianName = $this->bulkGuardianName($studentIndex);
 
-                    // Economic vulnerability: scholarship applicants are flagged automatically
-                    $isEconomicallyVulnerable = $guardianProfile['economically_vulnerable'];
-                    $economicStatus    = $isEconomicallyVulnerable ? 'scholarship supported' : 'standard';
-                    $scholarshipStatus = $isEconomicallyVulnerable
-                        ? ($roll >= 14 ? 'full scholarship' : 'partial scholarship')
-                        : null;
+                $guardianProfile = $this->guardianProfileForRoll($roll, $studentIndex);
 
-                    // Family context: realistic spread, more difficult situations in higher rolls
-                    $familyStatus = $this->familyStatusForRoll($roll, $studentIndex);
+                // Tuition: top students get enrichment; struggling students get remedial support
+                $hasTuition = in_array($roll, [1, 2, 10, 11, 12, 13]) || ($studentIndex % 6 === 0);
+                $tuitionSubjects = $hasTuition ? $this->tuitionSubjectsForRoll($roll, $studentIndex) : [];
 
-                    // Health: scattered, not correlated with performance
-                    $healthNotes = $studentIndex % 17 === 0 ? 'Seasonal asthma noted. Inhaler available at school office.' : null;
-                    $allergies   = $studentIndex % 19 === 0 ? 'Dust allergy, mild reaction' : ($studentIndex % 23 === 0 ? 'Food allergy — peanuts' : null);
-                    $medications = $studentIndex % 17 === 0 ? 'Salbutamol inhaler when needed' : null;
+                // Economic vulnerability: scholarship applicants are flagged automatically
+                $isEconomicallyVulnerable = $guardianProfile['economically_vulnerable'];
+                $economicStatus    = $isEconomicallyVulnerable ? 'scholarship supported' : 'standard';
+                $scholarshipStatus = $isEconomicallyVulnerable
+                    ? ($roll >= 14 ? 'full scholarship' : 'partial scholarship')
+                    : null;
 
-                    $specialNeeds = match (true) {
-                        $studentIndex % 21 === 0 => ['dyslexia_support'],
-                        $studentIndex % 29 === 0 => ['hearing_impairment_mild'],
-                        $studentIndex % 37 === 0 => ['learning_difficulty'],
-                        default                  => [],
-                    };
+                // Family context: realistic spread, more difficult situations in higher rolls
+                $familyStatus = $this->familyStatusForRoll($roll, $studentIndex);
 
-                    $confidentialContext = $this->confidentialContextForRoll($roll, $studentIndex, $familyStatus);
-                    $residenceNote = $studentIndex % 16 === 0 ? 'Moved to a new neighbourhood this term. Commute time increased.' : null;
+                // Health: scattered, not correlated with performance
+                $healthNotes = $studentIndex % 17 === 0 ? 'Seasonal asthma noted. Inhaler available at school office.' : null;
+                $allergies   = $studentIndex % 19 === 0 ? 'Dust allergy, mild reaction' : ($studentIndex % 23 === 0 ? 'Food allergy — peanuts' : null);
+                $medications = $studentIndex % 17 === 0 ? 'Salbutamol inhaler when needed' : null;
 
-                    $abilityScore    = $this->abilityScoreForRoll($roll);
-                    $willingnessScore = $guardianProfile['willingness_score'];
-                    $quadrant = $this->studentQuadrant($willingnessScore, $abilityScore);
+                $specialNeeds = match (true) {
+                    $studentIndex % 21 === 0 => ['dyslexia_support'],
+                    $studentIndex % 29 === 0 => ['hearing_impairment_mild'],
+                    $studentIndex % 37 === 0 => ['learning_difficulty'],
+                    default                  => [],
+                };
 
-                    $secondGuardian = $this->secondGuardianForBulk($roll, $studentIndex, $familyStatus, $guardianProfile);
+                $confidentialContext = $this->confidentialContextForRoll($roll, $studentIndex, $familyStatus);
+                $residenceNote = $studentIndex % 16 === 0 ? 'Moved to a new neighbourhood this term. Commute time increased.' : null;
 
-                    $student = Student::query()->create([
-                        'school_id'                   => $this->schoolId,
-                        'student_code'                => sprintf('PPS-%03d', $studentIndex),
-                        'name'                        => $studentName,
-                        'roll_number'                 => $roll,
-                        'admission_date'              => now()->subYears(
-                            (int) ($className) - 5 + ($studentIndex % 2)
-                        )->startOfYear(),
-                        'guardian_name'               => $guardianName,
-                        'guardian_phone'              => $this->generatePhone($studentIndex),
-                        'guardian_email'              => sprintf('guardian.bulk%03d@pps.local', $studentIndex),
-                        'guardian_relation'           => $guardianProfile['relation'],
-                        'guardian_profession'         => $guardianProfile['profession'],
-                        'guardian_profession_category'=> $guardianProfile['category'],
-                        'guardian_time_availability'  => $guardianProfile['time_availability'],
-                        'second_guardian_name'        => $secondGuardian['name'],
-                        'second_guardian_phone'       => $secondGuardian['phone'],
-                        'second_guardian_relation'    => $secondGuardian['relation'],
-                        'second_guardian_profession'  => $secondGuardian['profession'],
-                        'second_guardian_profession_category' => $secondGuardian['category'],
-                        'second_guardian_time_availability'   => $secondGuardian['time_availability'],
-                        'willingness_score'           => $willingnessScore,
-                        'ability_score'               => $abilityScore,
-                        'student_quadrant'            => $quadrant,
-                        'economically_vulnerable'     => $isEconomicallyVulnerable,
-                        'private_tuition_subjects'    => $tuitionSubjects,
-                        'private_tuition_notes'       => $tuitionSubjects !== [] ? $this->tuitionNote($roll, $tuitionSubjects) : null,
-                        'family_status'               => $familyStatus,
-                        'economic_status'             => $economicStatus,
-                        'scholarship_status'          => $scholarshipStatus,
-                        'health_notes'                => $healthNotes,
-                        'allergies'                   => $allergies,
-                        'medications'                 => $medications,
-                        'residence_change_note'       => $residenceNote,
-                        'special_needs'               => $specialNeeds,
-                        'confidential_context'        => $confidentialContext,
-                    ]);
+                $abilityScore    = $this->abilityScoreForRoll($roll);
+                $willingnessScore = $guardianProfile['willingness_score'];
+                $quadrant = $this->studentQuadrant($willingnessScore, $abilityScore);
 
-                    PpsAdministrationSeeder::enroll($student, $className, $section, $roll);
+                $secondGuardian = $this->secondGuardianForBulk($roll, $studentIndex, $familyStatus, $guardianProfile);
 
-                    User::query()->firstOrCreate(
-                        ['email' => $student->guardian_email],
-                        [
-                            'school_id' => $this->schoolId,
-                            'name'     => $guardianName,
-                            'role'     => 'guardian',
-                            'password' => Hash::make(self::DEMO_PASSWORD),
-                        ],
-                    );
+                $student = Student::query()->updateOrCreate([
+                    'school_id'                   => $this->schoolId,
+                    'student_code'                => sprintf('%s-%02d', $codePrefix, $roll),
+                ], [
+                    'name'                        => $studentName,
+                    'roll_number'                 => $roll,
+                    'admission_date'              => now()
+                        ->subYears($yearsEnrolled + ($studentIndex % 2))
+                        ->startOfYear(),
+                    'guardian_name'               => $guardianName,
+                    'guardian_phone'              => $this->generatePhone($studentIndex),
+                    'guardian_email'              => sprintf(
+                        'guardian.%s.%02d@%s',
+                        strtolower($codePrefix),
+                        $roll,
+                        PpsAdministrationSeeder::DEMO_DOMAIN,
+                    ),
+                    'guardian_relation'           => $guardianProfile['relation'],
+                    'guardian_profession'         => $guardianProfile['profession'],
+                    'guardian_profession_category'=> $guardianProfile['category'],
+                    'guardian_time_availability'  => $guardianProfile['time_availability'],
+                    'second_guardian_name'        => $secondGuardian['name'],
+                    'second_guardian_phone'       => $secondGuardian['phone'],
+                    'second_guardian_relation'    => $secondGuardian['relation'],
+                    'second_guardian_profession'  => $secondGuardian['profession'],
+                    'second_guardian_profession_category' => $secondGuardian['category'],
+                    'second_guardian_time_availability'   => $secondGuardian['time_availability'],
+                    'willingness_score'           => $willingnessScore,
+                    'ability_score'               => $abilityScore,
+                    'student_quadrant'            => $quadrant,
+                    'economically_vulnerable'     => $isEconomicallyVulnerable,
+                    'private_tuition_subjects'    => $tuitionSubjects,
+                    'private_tuition_notes'       => $tuitionSubjects !== [] ? $this->tuitionNote($roll, $tuitionSubjects) : null,
+                    'family_status'               => $familyStatus,
+                    'economic_status'             => $economicStatus,
+                    'scholarship_status'          => $scholarshipStatus,
+                    'health_notes'                => $healthNotes,
+                    'allergies'                   => $allergies,
+                    'medications'                 => $medications,
+                    'residence_change_note'       => $residenceNote,
+                    'special_needs'               => $specialNeeds,
+                    'confidential_context'        => $confidentialContext,
+                ]);
 
-                    $this->seedStudentDataset($student, $seedType, $teachers, $principal, $counselor, $studentIndex, $periods);
-                    $studentIndex++;
-                }
+                PpsAdministrationSeeder::enroll($student, $demoSection, $roll);
+
+                User::query()->firstOrCreate(
+                    ['email' => $student->guardian_email],
+                    [
+                        'school_id' => $this->schoolId,
+                        'name'     => $guardianName,
+                        'role'     => 'guardian',
+                        'password' => PpsAdministrationSeeder::demoPasswordHash(),
+                    ],
+                );
+
+                $this->seedStudentDataset($student, $seedType, $teachers, $principal, $counselor, $studentIndex, $periods);
+                $studentIndex++;
             }
         }
     }
 
     /**
-     * Map roll number to a seed type. Roll 1 = top of class, Roll 15 = most at risk.
-     * Introduces slight variation per class and section so not every class is identical.
+     * Map roll number to a seed type. Roll 1 = top of class, Roll 15 = most at
+     * risk — the Bangladeshi convention where roll is assigned by exam rank.
+     *
+     * The section's position in the demo cohort varies which of the
+     * middle-ground rolls get which type, so no two sections are identical.
+     * It used to be derived from the class name and the letter A/B; sections
+     * are called things like "Shapla" and "Orchid" here, and a class is a real
+     * row rather than a numeric string, so the index does the same job.
      */
-    private function seedTypeForRoll(int $roll, string $className, string $section): string
+    private function seedTypeForRoll(int $roll, int $sectionIndex): string
     {
-        // Class/section offset to vary which students in the middle-ground get which type
-        $offset = ((int) $className + ($section === 'B' ? 3 : 0)) % 4;
+        $offset = $sectionIndex % 4;
 
         return match (true) {
             $roll <= 2  => 'strong',
@@ -572,18 +604,31 @@ class PpsDemoSeeder extends Seeder
 
     private function bulkStudentName(int $idx): string
     {
+        // Stride the family name by a number coprime to the list length so it
+        // advances with every student. Dividing by the given-name count, as
+        // this used to, only changed surname every 50 students — which meant a
+        // whole 15-student section was called "Sultana".
         $g = self::GIVEN_NAMES[$idx % count(self::GIVEN_NAMES)];
-        $f = self::FAMILY_NAMES[intdiv($idx, count(self::GIVEN_NAMES)) % count(self::FAMILY_NAMES)];
+        $f = self::FAMILY_NAMES[self::familyNameIndex($idx)];
 
         return $g . ' ' . $f;
     }
 
     private function bulkGuardianName(int $idx): string
     {
+        // Same family name as the student: a guardian and their child share a
+        // surname, and a student profile that pairs "Rafi Molla" with a
+        // guardian called "Anwarul Karim" reads as generated data.
         $g = self::GUARDIAN_GIVEN_NAMES[$idx % count(self::GUARDIAN_GIVEN_NAMES)];
-        $f = self::FAMILY_NAMES[($idx + 5) % count(self::FAMILY_NAMES)];
+        $f = self::FAMILY_NAMES[self::familyNameIndex($idx)];
 
         return $g . ' ' . $f;
+    }
+
+    /** Family name slot for a student index, shared with their guardian. */
+    private static function familyNameIndex(int $idx): int
+    {
+        return ($idx * 7 + 3) % count(self::FAMILY_NAMES);
     }
 
     /**
@@ -788,8 +833,14 @@ class PpsDemoSeeder extends Seeder
         );
 
         foreach ($periodSeries as $position => $period) {
-            PerformanceSnapshot::query()->create(
-                $this->snapshotFor($student, $seedType, $period, $position)
+            $snapshot = $this->snapshotFor($student, $seedType, $period, $position);
+
+            PerformanceSnapshot::query()->updateOrCreate(
+                [
+                    'student_id' => $snapshot['student_id'],
+                    'snapshot_period' => $snapshot['snapshot_period'],
+                ],
+                $snapshot,
             );
         }
 
@@ -799,9 +850,10 @@ class PpsDemoSeeder extends Seeder
             ->first();
 
         if ($currentSnapshot && $currentSnapshot->alert_level !== 'none') {
-            $alert = PpsAlert::query()->create([
+            $alert = PpsAlert::query()->updateOrCreate([
                 'student_id'      => $student->id,
                 'snapshot_period' => $currentSnapshot->snapshot_period,
+            ], [
                 'alert_level'     => $currentSnapshot->alert_level,
                 'trigger_reasons' => $this->triggerReasonsFor($currentSnapshot->alert_level, $seedType, $student->id),
                 'notified_to'     => $this->notifiedToFor($currentSnapshot->alert_level),
@@ -810,13 +862,14 @@ class PpsDemoSeeder extends Seeder
             ]);
 
             if (in_array($currentSnapshot->alert_level, ['urgent', 'warning'], true)) {
-                CounselingSession::query()->create([
+                CounselingSession::query()->updateOrCreate([
                     'student_id'      => $student->id,
+                    'session_type'    => 'initial',
+                ], [
                     'counselor_id'    => $counselor->id,
                     'referred_by'     => $principal->id,
                     'alert_id'        => $alert->id,
                     'session_date'    => now()->subDays(min($studentIndex ?? 6, 12))->toDateString(),
-                    'session_type'    => 'initial',
                     'session_notes'   => $this->counselingNote($seedType),
                     'action_plan'     => $this->actionPlan($seedType),
                     'next_session_date' => now()->addDays(rand(5, 14))->toDateString(),
@@ -824,11 +877,12 @@ class PpsDemoSeeder extends Seeder
                 ]);
 
                 if (($studentIndex ?? 2) % 2 === 0) {
-                    CounselingSession::query()->create([
+                    CounselingSession::query()->updateOrCreate([
                         'student_id'           => $student->id,
+                        'session_type'         => 'psychometric',
+                    ], [
                         'counselor_id'         => $counselor->id,
                         'session_date'         => now()->subDays(min($studentIndex ?? 6, 10))->toDateString(),
-                        'session_type'         => 'psychometric',
                         'assessment_tool'      => 'PPS wellbeing checklist v2',
                         'session_notes'        => 'Structured psychometric screening completed.',
                         'progress_status'      => 'stable',
@@ -1047,12 +1101,13 @@ class PpsDemoSeeder extends Seeder
             $date = now()->copy()->addMonths($monthOffset);
             $teacherCount = $this->teacherRecords->count();
 
-            ClassroomRating::query()->create([
+            ClassroomRating::query()->updateOrCreate([
                 'student_id'     => $student->id,
+                'rating_period'  => $date->copy()->startOfMonth()->addDays(6)->toDateString(),
+            ], [
                 // pps_classroom_ratings.teacher_id points at teachers, not users.
                 'teacher_id'     => $this->teacherRecords[((($id + $monthOffset) % $teacherCount + $teacherCount) % $teacherCount)]->id,
                 'subject'        => $subjects[((($id + $monthOffset) % count($subjects) + count($subjects)) % count($subjects))]['name'],
-                'rating_period'  => $date->copy()->startOfMonth()->addDays(6)->toDateString(),
                 'period_type'    => 'monthly',
                 'participation'  => $this->seedRatingValue($seedType, 'participation', $id),
                 'attentiveness'  => $this->seedRatingValue($seedType, 'attentiveness', $id),
@@ -1068,9 +1123,10 @@ class PpsDemoSeeder extends Seeder
         foreach (range(1, 22) as $day) {
             $status = $this->attendanceStatus($seedType, $day, $id);
 
-            AttendanceRecord::query()->create([
+            AttendanceRecord::query()->updateOrCreate([
                 'student_id' => $student->id,
                 'date'       => now()->copy()->startOfMonth()->addDays($day - 1)->toDateString(),
+            ], [
                 'status'     => $status,
                 'marked_by'  => $teachers[$id % count($teachers->all())]->id,
                 'absence_reason' => $status === 'absent' ? $this->absenceReason($seedType) : null,
@@ -1083,9 +1139,10 @@ class PpsDemoSeeder extends Seeder
         // Extracurricular
         $activities = $this->extracurricularActivities($seedType, $id);
         foreach ($activities as $activity) {
-            Extracurricular::query()->create([
+            Extracurricular::query()->updateOrCreate([
                 'student_id'       => $student->id,
                 'activity_name'    => $activity['name'],
+            ], [
                 'category'         => $activity['category'],
                 'role'             => $activity['role'],
                 'achievement'      => $activity['achievement'],
@@ -1159,11 +1216,12 @@ class PpsDemoSeeder extends Seeder
         };
 
         foreach ($cards as $card) {
-            BehaviorCard::query()->create([
+            BehaviorCard::query()->updateOrCreate([
                 'student_id' => $student->id,
+                'reason'     => $card['reason'],
+            ], [
                 'issued_by'  => $teachers[$id % count($teachers->all())]->id,
                 'card_type'  => $card['type'],
-                'reason'     => $card['reason'],
                 'issued_at'  => now()->copy()->subDays($card['days_ago']),
             ]);
         }
@@ -1439,82 +1497,86 @@ class PpsDemoSeeder extends Seeder
         return $comments[$variant] ?? $comments[0];
     }
 
-    // ── Teacher assignments ────────────────────────────────────────────────────
+    // ── Demo teacher ───────────────────────────────────────────────────────────
 
     /**
-     * pps_teacher_assignments is now (teacher_id -> teachers, section_id ->
-     * sections, subject_id -> subjects). The class/section/subject strings the
-     * matrix used to store are resolved here into those three ids; subjects are
-     * named by short_name because subjects has no `name` column.
+     * A teacher login with a known password.
      *
-     * @param  Collection<int, Teacher>  $teacherRecords
+     * Every imported CPSCS teacher's password came across from otoroutine as an
+     * opaque bcrypt hash, so none of them can be used to demonstrate the
+     * teacher workspace. This one can. It gets its own `teachers` row rather
+     * than borrowing a real teacher's, and assignments in the two senior demo
+     * sections so the workspace has classes to open.
+     *
+     * Everything else in the demo — ratings, marks, attendance — is attributed
+     * to real imported staff; this account exists only to get a human in.
      */
-    private function seedTeacherAssignments(Collection $teacherRecords): void
+    private function seedDemoTeacher(): void
     {
-        $matrix = [
-            [
-                'teacher' => $teacherRecords[0], // Mariam Rahman - Math
-                'assignments' => [
-                    ['class_name' => '8', 'section' => 'A', 'subject' => 'MTH', 'is_class_teacher' => true],
-                    ['class_name' => '9', 'section' => 'A', 'subject' => 'MTH', 'is_class_teacher' => false],
-                    ['class_name' => '10','section' => 'A', 'subject' => 'MTH', 'is_class_teacher' => false],
-                    ['class_name' => '10','section' => 'B', 'subject' => 'MTH', 'is_class_teacher' => false],
-                ],
-            ],
-            [
-                'teacher' => $teacherRecords[1], // Sabbir Hasan - English
-                'assignments' => [
-                    ['class_name' => '7', 'section' => 'B', 'subject' => 'ENG', 'is_class_teacher' => true],
-                    ['class_name' => '8', 'section' => 'A', 'subject' => 'ENG', 'is_class_teacher' => false],
-                    ['class_name' => '9', 'section' => 'B', 'subject' => 'ENG', 'is_class_teacher' => false],
-                ],
-            ],
-            [
-                'teacher' => $teacherRecords[2], // Tahmina Akter - Science
-                'assignments' => [
-                    ['class_name' => '6', 'section' => 'A', 'subject' => 'SCIENCE', 'is_class_teacher' => true],
-                    ['class_name' => '8', 'section' => 'A', 'subject' => 'SCIENCE', 'is_class_teacher' => false],
-                    ['class_name' => '10','section' => 'A', 'subject' => 'SCIENCE', 'is_class_teacher' => false],
-                ],
-            ],
-            [
-                'teacher' => $teacherRecords[3], // Jalal Uddin - Bangla
-                'assignments' => [
-                    ['class_name' => '6', 'section' => 'B', 'subject' => 'BAN', 'is_class_teacher' => true],
-                    ['class_name' => '7', 'section' => 'A', 'subject' => 'BAN', 'is_class_teacher' => false],
-                    ['class_name' => '8', 'section' => 'B', 'subject' => 'BAN', 'is_class_teacher' => false],
-                ],
-            ],
-            [
-                'teacher' => $teacherRecords[4], // Nargis Sultana - Social Studies
-                'assignments' => [
-                    ['class_name' => '9', 'section' => 'B', 'subject' => 'SOC', 'is_class_teacher' => true],
-                    ['class_name' => '10','section' => 'B', 'subject' => 'SOC', 'is_class_teacher' => false],
-                    ['class_name' => '7', 'section' => 'A', 'subject' => 'SOC', 'is_class_teacher' => false],
-                ],
-            ],
-        ];
+        $user = PpsAdministrationSeeder::demoUser('teacher', 'RADAR Demo Teacher');
+        $teacher = PpsAdministrationSeeder::teacherFor($user);
 
-        foreach ($matrix as $row) {
-            foreach ($row['assignments'] as $assignment) {
-                $subject = PpsAdministrationSeeder::findSubject($assignment['subject']);
+        $sections = PpsAdministrationSeeder::demoSections()
+            ->filter(fn (Section $s) => ($s->classLevel?->numeric_order ?? 0)
+                >= PpsAdministrationSeeder::SENIOR_FROM_NUMERIC_ORDER)
+            ->take(2);
 
+        foreach ($sections as $section) {
+            $classLevel = $section->classLevel;
+
+            if ($classLevel === null) {
+                continue;
+            }
+
+            foreach (PpsAdministrationSeeder::examinableSubjects($classLevel, 3) as $i => $subject) {
                 TeacherAssignment::query()->updateOrCreate(
                     [
-                        'teacher_id' => $row['teacher']->id,
-                        'section_id' => PpsAdministrationSeeder::section(
-                            $assignment['class_name'],
-                            $assignment['section'],
-                        )->id,
-                        'subject_id' => $subject?->id,
+                        'teacher_id' => $teacher->id,
+                        'section_id' => $section->id,
+                        'subject_id' => $subject->id,
                     ],
                     [
-                        'school_id' => $this->schoolId,
-                        'is_class_teacher' => $assignment['is_class_teacher'],
+                        'school_id' => $section->school_id,
+                        'is_class_teacher' => $i === 0 && $section->class_teacher_id === null,
                     ],
                 );
             }
         }
+    }
+
+    /**
+     * Stable, human-readable prefix for a section's student codes, e.g.
+     * `BV-C9-SHAPLA`. Version initial + class + section name, uppercased and
+     * stripped of anything that would make a student_code awkward to type —
+     * class names here run to "Class 11 (Business Studies)" and section names
+     * to "Daffodil".
+     */
+    private function sectionCodePrefix(Section $section): string
+    {
+        $classLevel = $section->classLevel;
+
+        $version = strtoupper(substr($classLevel?->version?->name ?? 'X', 0, 1)).'V';
+
+        // "Class 11 (Business Studies)" -> C11; "Nursery" -> NURSERY; "KG" -> KG.
+        // The parenthetical is the group, which gets its own token below.
+        $className = $classLevel?->name ?? 'CLASS';
+        preg_match('/\d+/', $className, $digits);
+
+        $class = $digits === []
+            ? substr(preg_replace('/[^0-9A-Z]/', '', strtoupper($className)) ?: 'CLASS', 0, 8)
+            : 'C'.$digits[0];
+
+        $group = match ($classLevel?->group) {
+            'science' => '-SCI',
+            'humanities' => '-HUM',
+            'business_studies' => '-BST',
+            default => '',
+        };
+
+        $sectionName = preg_replace('/[^0-9A-Z]/', '', strtoupper($section->sectionName?->name ?? 'S'));
+        $sectionName = $sectionName === '' ? 'S' : substr($sectionName, 0, 8);
+
+        return "{$version}-{$class}{$group}-{$sectionName}";
     }
 
     // ── Marks ──────────────────────────────────────────────────────────────────

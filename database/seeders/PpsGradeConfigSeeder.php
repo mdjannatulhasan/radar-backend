@@ -32,7 +32,7 @@ class PpsGradeConfigSeeder extends Seeder
         // pps_departments collapsed into class_levels.group, a CHECK-constrained
         // enum of science | humanities | business_studies. The vocabulary is
         // fixed by the schema, so there is nothing left to seed here — a class's
-        // group is set where the class itself is created, in
-        // PpsAdministrationSeeder::CLASS_LEVELS.
+        // group is set where the class itself is created — which is now the
+        // otoroutine import, not a seeder.
     }
 }

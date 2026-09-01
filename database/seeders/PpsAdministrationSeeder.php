@@ -9,224 +9,309 @@ use App\Models\Pps\ExamClassMap;
 use App\Models\Pps\ExamComponent;
 use App\Models\Pps\ExamType;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Hash;
 use SmsCore\Models\AcademicYear;
 use SmsCore\Models\ClassLevel;
-use SmsCore\Models\Level;
 use SmsCore\Models\School;
 use SmsCore\Models\Section;
-use SmsCore\Models\SectionName;
 use SmsCore\Models\Student;
 use SmsCore\Models\StudentEnrollment;
 use SmsCore\Models\Subject;
 use SmsCore\Models\Teacher;
 use SmsCore\Models\User;
-use SmsCore\Models\Version;
 
 /**
- * Builds the shared sms-core taxonomy every other RADAR seeder hangs off:
- * school -> levels x versions -> class_levels -> sections, plus the academic
- * year, the subject catalogue and the mid-term exams.
+ * Resolves the real school structure the RADAR demo data hangs off, and adds
+ * the few rows a demo needs that a real import cannot supply.
  *
- * The old single-tenant tables this replaced are gone: pps_departments and
- * pps_streams were duplicates of each other and are now class_levels.group;
- * pps_classes / pps_sections / pps_class_configs are class_levels /
- * section_names / sections.
+ * This seeder used to CREATE a synthetic taxonomy — a "PPS Demo School" with
+ * classes 6-10 and sections A/B. It no longer does. The taxonomy is now real:
+ * `sms:import:otoroutine` brings in Cantonment Public School & College's own
+ * levels, versions, class_levels, section_names, sections, subjects, teachers
+ * and designations, and this seeder DISCOVERS them. Creating a second school
+ * beside the imported one is exactly the bug this rewrite exists to prevent,
+ * so every resolver below reads; none of them invents structure.
  *
- * The static resolvers are the seeder equivalent of tests/Support/TaxonomyFixtures:
- * every one is firstOrCreate, so any seeder may call them in any order and run
- * standalone. They are static rather than instance methods precisely so the
- * other seeders can reuse them without a second copy of the chain.
+ * What it does still create is the part of a demo that no source system holds:
+ * the role logins RADAR needs to show its permission model (the import carries
+ * only `admin` and `teacher` accounts, and no superadmin at all), and a set of
+ * exams with multiple weighted components so the marks grid has something to
+ * render.
  */
 class PpsAdministrationSeeder extends Seeder
 {
-    public const SCHOOL_NAME = 'PPS Demo School';
+    /**
+     * Password for every account this seeder creates. DEV/DEMO ONLY — these
+     * accounts exist to demonstrate the product, are documented in the README
+     * of the seed run, and must never be created in a production tenant.
+     */
+    public const DEMO_PASSWORD = 'PpsDemo2026!';
 
-    public const SCHOOL_SLUG = 'pps-demo';
-
-    public const LEVEL_SCHOOL = 'School';
-
-    public const LEVEL_COLLEGE = 'College';
-
-    public const VERSION_BANGLA = 'Bangla';
+    /** Domain for accounts this seeder owns, so they are distinguishable from imported staff. */
+    public const DEMO_DOMAIN = 'radar.local';
 
     /**
-     * Every class RADAR's demo data knows about.
+     * How many sections of each class get a demo cohort.
      *
-     * `group` carries what pps_departments / pps_streams used to: classes 9 and
-     * 10 were tagged Science by the old ClassSection seed, and class 12 is the
-     * College-level science stream. Classes below 9 had no real stream — the
-     * old "General" department was a placeholder, and the column is nullable.
-     *
-     * numeric_order follows the sms-core convention: Nursery=0, KG=1, Class 1=2
-     * … Class 12=13, so class N sorts at N+1.
-     *
-     * @var array<string, array{level:string, group:?string, numeric_order:int}>
+     * One per class, so every class in every version and group has students and
+     * no filter combination in the UI lands on an empty roster; a second one
+     * from Class 9 up (numeric_order 10+), because that is where RADAR's risk
+     * engine, exam components and counselling flows actually earn their keep,
+     * and because a same-class/different-section comparison needs two.
      */
-    public const CLASS_LEVELS = [
-        '4' => ['level' => self::LEVEL_SCHOOL, 'group' => null, 'numeric_order' => 5],
-        '5' => ['level' => self::LEVEL_SCHOOL, 'group' => null, 'numeric_order' => 6],
-        '6' => ['level' => self::LEVEL_SCHOOL, 'group' => null, 'numeric_order' => 7],
-        '7' => ['level' => self::LEVEL_SCHOOL, 'group' => null, 'numeric_order' => 8],
-        '8' => ['level' => self::LEVEL_SCHOOL, 'group' => null, 'numeric_order' => 9],
-        '9' => ['level' => self::LEVEL_SCHOOL, 'group' => 'science', 'numeric_order' => 10],
-        '10' => ['level' => self::LEVEL_SCHOOL, 'group' => 'science', 'numeric_order' => 11],
-        '12' => ['level' => self::LEVEL_COLLEGE, 'group' => 'science', 'numeric_order' => 13],
-    ];
+    public const SECTIONS_PER_CLASS = 1;
 
-    /** The classes that actually have taught sections, and their section names. */
-    public const SECTIONED_CLASSES = ['6', '7', '8', '9', '10'];
+    public const SECTIONS_PER_SENIOR_CLASS = 2;
 
-    public const SECTION_NAMES = ['A', 'B'];
+    /** numeric_order of Class 9 — Nursery=0, KG=1, Class 1=2 … Class 12=13. */
+    public const SENIOR_FROM_NUMERIC_ORDER = 10;
+
+    /** Examinable subjects per class. */
+    public const SUBJECTS_PER_EXAM = 6;
 
     /**
-     * The core subject catalogue (was pps_subjects, minus department_id).
+     * Subjects that exist on the timetable but are never sat as an exam. The
+     * imported catalogue mixes both — "Library", "Disposal" and "Games Class"
+     * are periods, not papers — and putting marks against them would produce a
+     * marks grid no teacher would recognise.
      *
-     * @var array<int, array{short:string, full:string}>
+     * @var array<int, string>
      */
-    public const CORE_SUBJECTS = [
-        ['short' => 'BAN', 'full' => 'Bangla'],
-        ['short' => 'ENG', 'full' => 'English'],
-        ['short' => 'MTH', 'full' => 'Mathematics'],
-        ['short' => 'SCIENCE', 'full' => 'Science'],
-        ['short' => 'SOC', 'full' => 'Social Studies'],
+    private const NON_EXAMINABLE_SHORT_NAMES = [
+        'Art', 'CoCu', 'Games', 'Project', 'Lib', 'Disp', 'PEd', 'Club', 'CEd',
     ];
+
+    /**
+     * The weighted components every demo exam is broken into. Sums to 100, and
+     * gives the marks grid more than one column to render — the whole point of
+     * pps_exam_components over the old single total_marks field.
+     *
+     * @var array<int, array{code:string, name:string, max:float}>
+     */
+    private const EXAM_COMPONENTS = [
+        ['code' => 'WRITTEN', 'name' => 'Written', 'max' => 70.0],
+        ['code' => 'MCQ', 'name' => 'MCQ', 'max' => 20.0],
+        ['code' => 'CA', 'name' => 'Continuous Assessment', 'max' => 10.0],
+    ];
+
+    private static ?School $schoolCache = null;
+
+    private static ?AcademicYear $yearCache = null;
+
+    private static ?Collection $demoSectionCache = null;
+
+    private static ?string $passwordHashCache = null;
 
     public function run(): void
     {
         $school = self::school();
+        $year = self::academicYear();
 
-        self::academicYear();
+        $this->command?->info(sprintf(
+            'Seeding RADAR demo data into "%s" (academic year %s).',
+            $school->name,
+            $year->name,
+        ));
 
-        $superadmin = User::query()->firstOrCreate(['email' => 'superadmin@pps.local'], [
-            'school_id' => $school->id,
-            'name' => 'RADAR Super Admin',
-            'role' => 'superadmin',
-            'password' => Hash::make(PpsDemoSeeder::DEMO_PASSWORD),
-        ]);
+        $sections = self::demoSections();
 
-        // Classes 6–10, sections A and B — what pps_class_sections / pps_classes /
-        // pps_sections / pps_class_configs together used to express.
-        foreach (self::SECTIONED_CLASSES as $className) {
-            foreach (self::SECTION_NAMES as $sectionName) {
-                self::section($className, $sectionName);
-            }
-        }
+        $this->command?->info(sprintf(
+            'Demo cohort will cover %d of %d active sections across %d classes.',
+            $sections->count(),
+            Section::query()->where('is_active', true)->count(),
+            $sections->pluck('class_level_id')->unique()->count(),
+        ));
 
-        foreach (self::CORE_SUBJECTS as $subject) {
-            self::subject($subject['short'], $subject['full'], self::LEVEL_SCHOOL);
-        }
-
-        $this->seedMidTermExams($superadmin);
+        // Exams are PpsExamSeeder's job; it runs next and uses the resolvers below.
     }
 
-    // ── Taxonomy resolvers ─────────────────────────────────────────────────────
+    // ── Discovery ──────────────────────────────────────────────────────────────
 
+    /**
+     * The one school in this tenant. sms-core is schema-per-tenant, so a tenant
+     * holds exactly one school; taking the lowest id is deterministic rather
+     * than arbitrary.
+     */
     public static function school(): School
     {
-        return School::query()->firstOrCreate(
-            ['slug' => self::SCHOOL_SLUG],
-            ['name' => self::SCHOOL_NAME],
-        );
+        if (self::$schoolCache !== null) {
+            return self::$schoolCache;
+        }
+
+        $school = School::query()->orderBy('id')->first();
+
+        if ($school === null) {
+            throw new \RuntimeException(
+                'No school in this tenant. Run: php artisan tenants:run sms:import:otoroutine --tenants=<slug>'
+            );
+        }
+
+        return self::$schoolCache = $school;
     }
 
+    /** The academic year enrollments are written against. */
     public static function academicYear(): AcademicYear
     {
-        $year = (string) now()->year;
+        if (self::$yearCache !== null) {
+            return self::$yearCache;
+        }
 
-        return AcademicYear::query()->firstOrCreate(
-            ['school_id' => self::school()->id, 'name' => $year],
-            [
-                'start_date' => $year.'-01-01',
-                'end_date' => $year.'-12-31',
-                'is_current' => true,
-            ],
-        );
-    }
-
-    public static function level(string $name): Level
-    {
-        return Level::query()->firstOrCreate(
-            ['school_id' => self::school()->id, 'name' => $name],
-            ['sort_order' => $name === self::LEVEL_SCHOOL ? 1 : 2],
-        );
-    }
-
-    public static function version(string $name = self::VERSION_BANGLA): Version
-    {
-        return Version::query()->firstOrCreate(
-            ['school_id' => self::school()->id, 'name' => $name],
-            ['sort_order' => $name === self::VERSION_BANGLA ? 1 : 2],
-        );
-    }
-
-    /** A class as taught: name + level + version, carrying its group. */
-    public static function classLevel(string $name): ClassLevel
-    {
-        $spec = self::CLASS_LEVELS[$name] ?? ['level' => self::LEVEL_SCHOOL, 'group' => null, 'numeric_order' => null];
-
-        return ClassLevel::query()->firstOrCreate(
-            [
-                'school_id' => self::school()->id,
-                'level_id' => self::level($spec['level'])->id,
-                'version_id' => self::version()->id,
-                'name' => $name,
-            ],
-            [
-                'group' => $spec['group'],
-                'numeric_order' => $spec['numeric_order'],
-                'is_active' => true,
-            ],
-        );
-    }
-
-    public static function sectionName(string $name): SectionName
-    {
-        return SectionName::query()->firstOrCreate(
-            ['school_id' => self::school()->id, 'name' => $name],
-            ['sort_order' => ord($name) - ord('A')],
-        );
-    }
-
-    /** The concrete class+section a student sits in, e.g. ("8", "A"). */
-    public static function section(string $className, string $sectionName): Section
-    {
-        return Section::query()->firstOrCreate(
-            [
-                'school_id' => self::school()->id,
-                'class_level_id' => self::classLevel($className)->id,
-                'section_name_id' => self::sectionName($sectionName)->id,
-            ],
-            ['capacity' => 45, 'is_active' => true],
-        );
-    }
-
-    /** subjects has no `name` and no `department_id`: full_name + short_name, scoped by level. */
-    public static function subject(string $shortName, string $fullName, string $level = self::LEVEL_SCHOOL): Subject
-    {
-        return Subject::query()->firstOrCreate(
-            [
-                'school_id' => self::school()->id,
-                'level_id' => self::level($level)->id,
-                'version_id' => self::version()->id,
-                'short_name' => $shortName,
-            ],
-            ['full_name' => $fullName, 'is_active' => true],
-        );
-    }
-
-    public static function findSubject(string $shortName): ?Subject
-    {
-        return Subject::query()
+        $year = AcademicYear::query()
             ->where('school_id', self::school()->id)
-            ->where('short_name', $shortName)
+            ->orderByDesc('is_current')
+            ->orderByDesc('start_date')
             ->first();
+
+        if ($year === null) {
+            throw new \RuntimeException(
+                'No academic year in this tenant. Run sms:import:otoroutine before seeding demo data.'
+            );
+        }
+
+        return self::$yearCache = $year;
     }
 
     /**
-     * The staff record behind a login. users.id is NOT a teacher id any more —
-     * pps_teacher_assignments and pps_classroom_ratings both point at teachers.
+     * The sections the demo cohort is seeded into.
+     *
+     * Deterministically ordered — class by numeric_order, then section by its
+     * name's sort_order — so two seed runs pick the same sections and
+     * updateOrCreate stays idempotent.
+     *
+     * @return Collection<int, Section>
      */
+    public static function demoSections(): Collection
+    {
+        if (self::$demoSectionCache !== null) {
+            return self::$demoSectionCache;
+        }
+
+        $all = Section::query()
+            ->where('school_id', self::school()->id)
+            ->where('is_active', true)
+            ->with(['classLevel.level', 'classLevel.version', 'sectionName'])
+            ->get();
+
+        if ($all->isEmpty()) {
+            throw new \RuntimeException(
+                'No sections found. Run sms:import:otoroutine before seeding demo data.'
+            );
+        }
+
+        $picked = $all
+            ->sortBy(fn (Section $s) => [
+                $s->classLevel?->numeric_order ?? 999,
+                $s->classLevel?->version?->name ?? '',
+                $s->classLevel?->group ?? '',
+                $s->sectionName?->sort_order ?? 999,
+                $s->id,
+            ])
+            ->groupBy('class_level_id')
+            ->map(function (Collection $sections): Collection {
+                $order = $sections->first()->classLevel?->numeric_order;
+
+                $take = $order !== null && $order >= self::SENIOR_FROM_NUMERIC_ORDER
+                    ? self::SECTIONS_PER_SENIOR_CLASS
+                    : self::SECTIONS_PER_CLASS;
+
+                return $sections->take($take);
+            })
+            ->flatten()
+            ->values();
+
+        return self::$demoSectionCache = $picked;
+    }
+
+    /**
+     * The subjects a class actually sits exams in.
+     *
+     * subjects carries level + version but no class, so every class in a level
+     * shares a pool; the non-examinable periods are filtered out and the first
+     * few taken, deterministically by id.
+     *
+     * @return Collection<int, Subject>
+     */
+    public static function examinableSubjects(ClassLevel $classLevel, int $limit = self::SUBJECTS_PER_EXAM): Collection
+    {
+        return Subject::query()
+            ->where('school_id', self::school()->id)
+            ->where('level_id', $classLevel->level_id)
+            ->where('version_id', $classLevel->version_id)
+            ->where('is_active', true)
+            ->whereNotIn('short_name', self::NON_EXAMINABLE_SHORT_NAMES)
+            ->where('full_name', 'not like', '%(Lab)%')
+            ->orderBy('id')
+            ->take($limit)
+            ->get();
+    }
+
+    /**
+     * Real teachers, preferring those already linked to a login — the demo
+     * writes users.id into pps_attendance.marked_by and pps_marks.entered_by,
+     * so a teacher without an account cannot be the one who entered a mark.
+     *
+     * @return Collection<int, Teacher>
+     */
+    public static function realTeachers(int $limit = 12): Collection
+    {
+        return Teacher::query()
+            ->where('school_id', self::school()->id)
+            ->where('is_active', true)
+            ->whereNotNull('user_id')
+            ->with('user')
+            ->orderBy('id')
+            ->take($limit)
+            ->get()
+            ->filter(fn (Teacher $t) => $t->user !== null)
+            ->values();
+    }
+
+    // ── Demo accounts ──────────────────────────────────────────────────────────
+
+    /**
+     * A login for one RADAR role.
+     *
+     * The imported staff carry only `admin` and `teacher`, and the source's only
+     * super_admin was Autoroutine's own platform account (school_id NULL),
+     * correctly excluded from the tenant. Without these there is no way into the
+     * app at all, let alone a way to show the permission model.
+     */
+    public static function demoUser(string $role, string $name, ?string $email = null): User
+    {
+        $email ??= $role.'@'.self::DEMO_DOMAIN;
+
+        $user = User::query()->firstOrNew(['email' => $email]);
+
+        $user->fill([
+            'school_id' => self::school()->id,
+            'name' => $name,
+            'role' => $role,
+            'password' => self::demoPasswordHash(),
+        ]);
+
+        if ($user->isDirty() || ! $user->exists) {
+            $user->save();
+        }
+
+        return $user;
+    }
+
+    /**
+     * The demo password, hashed once.
+     *
+     * Every account this seeder creates shares one password by design, so they
+     * share one hash too: bcrypt at the configured cost is ~250ms, and hashing
+     * it per row would put minutes of pure CPU into a seed that is otherwise
+     * I/O bound. The shared salt leaks nothing that the shared plaintext does
+     * not already leak. DEV/DEMO ONLY.
+     */
+    public static function demoPasswordHash(): string
+    {
+        return self::$passwordHashCache ??= Hash::make(self::DEMO_PASSWORD);
+    }
+
+    /** The staff record behind a login; users.id is not a teacher id. */
     public static function teacherFor(User $user): Teacher
     {
         return Teacher::query()->firstOrCreate(
@@ -239,8 +324,8 @@ class PpsAdministrationSeeder extends Seeder
         );
     }
 
-    /** Put a student in a class+section for the current year. */
-    public static function enroll(Student $student, string $className, string $sectionName, ?int $rollNumber = null): StudentEnrollment
+    /** Put a student in a real section for the current academic year. */
+    public static function enroll(Student $student, Section $section, ?int $rollNumber = null): StudentEnrollment
     {
         return StudentEnrollment::query()->updateOrCreate(
             [
@@ -248,37 +333,47 @@ class PpsAdministrationSeeder extends Seeder
                 'academic_year_id' => self::academicYear()->id,
             ],
             [
-                'school_id' => self::school()->id,
-                'section_id' => self::section($className, $sectionName)->id,
+                'school_id' => $section->school_id,
+                'section_id' => $section->id,
                 'roll_number' => $rollNumber,
                 'status' => 'active',
             ],
         );
     }
 
+    public static function examType(string $code, string $name, bool $isTerminal): ExamType
+    {
+        return ExamType::query()->updateOrCreate(
+            ['code' => $code],
+            ['name' => $name, 'is_terminal' => $isTerminal, 'is_system' => true, 'is_active' => true],
+        );
+    }
+
+    // ── Exams ──────────────────────────────────────────────────────────────────
+
+    /** Class name qualified by version, so "Class 9" Bangla and English are distinct exams. */
+    public static function classLabel(ClassLevel $classLevel): string
+    {
+        $version = $classLevel->version?->name;
+
+        return $version === null ? $classLevel->name : "{$classLevel->name} ({$version})";
+    }
+
     /**
-     * An exam scoped to one class, with a single 100-mark written component and
-     * one class-map row per subject. This is the shape the old
-     * pps_exam_definitions rows (one per class x subject, total_marks 100)
-     * translate into: the class x subject pair moved out of the exam row and
-     * into pps_exam_class_map.
-     *
-     * @param  array<int, string>  $subjectShortNames
+     * @param  Collection<int, Subject>  $subjects
      */
-    public static function examForClass(
+    public static function examFor(
         ExamType $type,
-        string $className,
+        ClassLevel $classLevel,
         string $title,
         int $term,
         string $examDate,
-        array $subjectShortNames,
-        ?int $createdBy = null,
-        float $totalMarks = 100.0,
+        Collection $subjects,
+        ?int $createdBy,
+        int $academicYear,
     ): Exam {
-        $year = (int) now()->year;
-
         $exam = Exam::query()->updateOrCreate(
-            ['title' => $title, 'academic_year' => $year],
+            ['title' => $title, 'academic_year' => $academicYear],
             [
                 'exam_type_id' => $type->id,
                 'term' => $term,
@@ -290,28 +385,22 @@ class PpsAdministrationSeeder extends Seeder
             ],
         );
 
-        ExamComponent::query()->updateOrCreate(
-            ['exam_id' => $exam->id, 'code' => 'WRITTEN'],
-            [
-                'name' => 'Written',
-                'max_raw_marks' => $totalMarks,
-                'max_contribution' => $totalMarks,
-                'sort_order' => 1,
-            ],
-        );
+        foreach (self::EXAM_COMPONENTS as $i => $component) {
+            ExamComponent::query()->updateOrCreate(
+                ['exam_id' => $exam->id, 'code' => $component['code']],
+                [
+                    'name' => $component['name'],
+                    'max_raw_marks' => $component['max'],
+                    'max_contribution' => $component['max'],
+                    'sort_order' => $i + 1,
+                ],
+            );
+        }
 
-        $classLevelId = self::classLevel($className)->id;
-
-        foreach ($subjectShortNames as $shortName) {
-            $subject = self::findSubject($shortName);
-
-            if ($subject === null) {
-                continue;
-            }
-
+        foreach ($subjects as $subject) {
             ExamClassMap::query()->updateOrCreate([
                 'exam_id' => $exam->id,
-                'class_level_id' => $classLevelId,
+                'class_level_id' => $classLevel->id,
                 'section_id' => null,
                 'subject_id' => $subject->id,
             ], []);
@@ -320,32 +409,12 @@ class PpsAdministrationSeeder extends Seeder
         return $exam;
     }
 
-    public static function examType(string $code, string $name, bool $isTerminal): ExamType
+    /** Test/re-run hygiene: the caches above outlive a single seeder instance. */
+    public static function flushCaches(): void
     {
-        return ExamType::query()->updateOrCreate(
-            ['code' => $code],
-            ['name' => $name, 'is_terminal' => $isTerminal, 'is_system' => true, 'is_active' => true],
-        );
-    }
-
-    // ── Mid-term exams ─────────────────────────────────────────────────────────
-
-    private function seedMidTermExams(User $superadmin): void
-    {
-        $type = self::examType('mid_term', 'Mid Term', false);
-        $examDate = now()->startOfMonth()->addDays(18)->toDateString();
-        $subjects = array_column(self::CORE_SUBJECTS, 'short');
-
-        foreach (self::SECTIONED_CLASSES as $className) {
-            self::examForClass(
-                $type,
-                $className,
-                "Mid Term — Class {$className}",
-                1,
-                $examDate,
-                $subjects,
-                $superadmin->id,
-            );
-        }
+        self::$schoolCache = null;
+        self::$yearCache = null;
+        self::$demoSectionCache = null;
+        self::$passwordHashCache = null;
     }
 }

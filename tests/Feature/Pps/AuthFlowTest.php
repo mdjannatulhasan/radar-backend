@@ -2,7 +2,6 @@
 
 namespace Tests\Feature\Pps;
 
-use SmsCore\Models\User;
 use App\Support\PpsPermissions;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
@@ -30,7 +29,7 @@ class AuthFlowTest extends TestCase
         $loginResponse
             ->assertCreated()
             ->assertJsonPath('user.role', 'principal')
-            ->assertJsonPath('user.home_path', '/pps');
+            ->assertJsonPath('user.home_path', '/');
 
         $token = $loginResponse->json('token');
 
@@ -71,7 +70,7 @@ class AuthFlowTest extends TestCase
             'password' => 'secret-password',
         ])
             ->assertCreated()
-            ->assertJsonPath('user.home_path', '/pps/teacher')
+            ->assertJsonPath('user.home_path', '/teacher')
             ->assertJsonPath('user.permissions', $teacher->permissions());
 
         $this->postJson('/api/v1/auth/login', [
@@ -79,7 +78,7 @@ class AuthFlowTest extends TestCase
             'password' => 'secret-password',
         ])
             ->assertCreated()
-            ->assertJsonPath('user.home_path', '/pps/students')
+            ->assertJsonPath('user.home_path', '/students')
             ->assertJsonPath('user.permissions', PpsPermissions::forRole('counselor'));
     }
 }
