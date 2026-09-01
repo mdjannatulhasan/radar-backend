@@ -22,6 +22,7 @@ return Application::configure(basePath: dirname(__DIR__))
                 Request::HEADER_X_FORWARDED_AWS_ELB
         );
         $middleware->alias([
+            'tenant' => \SmsCore\Http\Middleware\InitializeTenancyBySubdomain::class,
             'pps.role' => \App\Http\Middleware\PpsRoleMiddleware::class,
             'pps.permission' => \App\Http\Middleware\PpsPermissionMiddleware::class,
             'pps.permission_any' => \App\Http\Middleware\PpsPermissionAnyMiddleware::class,
