@@ -24,6 +24,12 @@ class SmsCoreServiceProvider extends ServiceProvider
         ], 'sms-core-config');
 
         $this->bootTenancyEvents();
+
+        if ($this->app->runningInConsole()) {
+            $this->commands([
+                \SmsCore\Console\TenantCreateCommand::class,
+            ]);
+        }
     }
 
     /**
