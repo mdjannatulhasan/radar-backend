@@ -4,7 +4,11 @@ declare(strict_types=1);
 
 namespace SmsCore;
 
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
+use Stancl\JobPipeline\JobPipeline;
+use Stancl\Tenancy\Events\TenantCreated;
+use Stancl\Tenancy\Jobs\CreateDatabase;
 
 class SmsCoreServiceProvider extends ServiceProvider
 {
@@ -18,6 +22,24 @@ class SmsCoreServiceProvider extends ServiceProvider
         $this->publishes([
             __DIR__.'/../config/sms-core.php' => config_path('sms-core.php'),
         ], 'sms-core-config');
+
+        $this->bootTenancyEvents();
+    }
+
+    /**
+     * stancl/tenancy's own service provider registers the tenancy singletons
+     * and bootstrappers, but it does NOT wire tenant lifecycle events to jobs
+     * — that mapping normally lives in an app-published TenancyServiceProvider,
+     * which this platform doesn't have. Without this, creating a Tenant row
+     * never provisions its Postgres schema.
+     */
+    protected function bootTenancyEvents(): void
+    {
+        Event::listen(TenantCreated::class, JobPipeline::make([
+            CreateDatabase::class,
+        ])->send(function (TenantCreated $event) {
+            return $event->tenant;
+        })->shouldBeQueued(false)->toListener());
     }
 
     /**

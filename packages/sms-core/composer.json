@@ -7,7 +7,8 @@
         "php": "^8.3",
         "laravel/framework": "^13.0",
         "laravel/sanctum": "^4.0",
-        "stancl/tenancy": "^3.10"
+        "stancl/tenancy": "^3.10",
+        "stancl/jobpipeline": "^1.9"
     },
     "autoload": {
         "psr-4": {
