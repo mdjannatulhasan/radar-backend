@@ -6,6 +6,8 @@ namespace SmsCore;
 
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
+use SmsCore\Console\ImportOtoroutineCommand;
+use SmsCore\Console\TenantCreateCommand;
 use SmsCore\Tenancy\SchemaSearchPathBootstrapper;
 use Stancl\JobPipeline\JobPipeline;
 use Stancl\Tenancy\Bootstrappers\DatabaseTenancyBootstrapper;
@@ -40,7 +42,8 @@ class SmsCoreServiceProvider extends ServiceProvider
 
         if ($this->app->runningInConsole()) {
             $this->commands([
-                \SmsCore\Console\TenantCreateCommand::class,
+                ImportOtoroutineCommand::class,
+                TenantCreateCommand::class,
             ]);
         }
     }
