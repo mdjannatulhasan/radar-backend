@@ -119,6 +119,25 @@ return [
             'sslmode' => env('DB_SSLMODE', 'prefer'),
         ],
 
+        /*
+         * Read-only source connection for the one-time otoroutine import
+         * (sms:import:otoroutine). Not used at runtime. Safe to leave
+         * unconfigured in production — the command fails loudly if it cannot
+         * connect.
+         */
+        'otoroutine' => [
+            'driver' => 'mysql',
+            'host' => env('OTOROUTINE_DB_HOST', '127.0.0.1'),
+            'port' => env('OTOROUTINE_DB_PORT', '3306'),
+            'database' => env('OTOROUTINE_DB_DATABASE', 'autoroutine'),
+            'username' => env('OTOROUTINE_DB_USERNAME', 'root'),
+            'password' => env('OTOROUTINE_DB_PASSWORD', ''),
+            'charset' => 'utf8mb4',
+            'collation' => 'utf8mb4_unicode_ci',
+            'prefix' => '',
+            'strict' => true,
+        ],
+
         'sqlsrv' => [
             'driver' => 'sqlsrv',
             'url' => env('DB_URL'),
