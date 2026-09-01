@@ -25,6 +25,8 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        $this->loadMigrationsFrom(\SmsCore\SmsCoreServiceProvider::centralMigrationPath());
+
         Gate::policy(Student::class, StudentPolicy::class);
 
         RateLimiter::for('pps-api', function (Request $request): array {
