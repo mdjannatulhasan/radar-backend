@@ -26,7 +26,7 @@ class PpsDemoSeeder extends Seeder
     public const DEMO_PASSWORD = PpsAdministrationSeeder::DEMO_PASSWORD;
 
     /**
-     * Students per demo section.
+     * Students per demo section, across all 98 sections — about 1,470 students.
      *
      * Fifteen because roll number IS the academic profile here — roll 1-2 are
      * the top of the class and roll 14-15 the most at risk, mirroring the
@@ -391,7 +391,7 @@ class PpsDemoSeeder extends Seeder
             $this->seedStudentDataset($student, $profile['seed_type'], $teachers, $principal, $counselor);
         }
 
-        // ── Bulk cohort: 15 per class/section = 150 students ─────────────────────
+        // ── Bulk cohort: 15 per section, across every section ────────────────────
         // Roll number drives academic profile: roll 1-2 = top performers, roll 14-15 = at-risk.
         // This mirrors the Bangladeshi convention where roll is assigned by exam rank.
 
@@ -399,11 +399,12 @@ class PpsDemoSeeder extends Seeder
             fn (int $m) => now()->subMonths($m)->format('Y-m')
         );
 
-        // The demo cohort is drawn from the REAL sections, one per class plus a
-        // second from Class 9 up. Every class in both versions, both levels and
-        // all three College groups gets students, so no filter combination in
-        // the UI lands on an empty roster, while the total stays a size a seed
-        // run and a demo can both carry.
+        // The demo cohort is drawn from EVERY real section — all 98 of them, so
+        // the demo shows the school's actual shape: five Bangla sections and
+        // two English per junior class, not the one-per-class institution the
+        // old 36-section cohort implied. Every class in both versions, both
+        // levels and all three College groups gets students, and no section the
+        // class browser lists is empty.
         $demoSections = PpsAdministrationSeeder::demoSections();
         $studentIndex = 1;
 

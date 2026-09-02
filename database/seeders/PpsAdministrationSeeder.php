@@ -52,19 +52,6 @@ class PpsAdministrationSeeder extends Seeder
     /** Domain for accounts this seeder owns, so they are distinguishable from imported staff. */
     public const DEMO_DOMAIN = 'radar.local';
 
-    /**
-     * How many sections of each class get a demo cohort.
-     *
-     * One per class, so every class in every version and group has students and
-     * no filter combination in the UI lands on an empty roster; a second one
-     * from Class 9 up (numeric_order 10+), because that is where RADAR's risk
-     * engine, exam components and counselling flows actually earn their keep,
-     * and because a same-class/different-section comparison needs two.
-     */
-    public const SECTIONS_PER_CLASS = 1;
-
-    public const SECTIONS_PER_SENIOR_CLASS = 2;
-
     /** numeric_order of Class 9 — Nursery=0, KG=1, Class 1=2 … Class 12=13. */
     public const SENIOR_FROM_NUMERIC_ORDER = 10;
 
@@ -174,11 +161,21 @@ class PpsAdministrationSeeder extends Seeder
     }
 
     /**
-     * The sections the demo cohort is seeded into.
+     * The sections the demo cohort is seeded into: every active one.
      *
-     * Deterministically ordered — class by numeric_order, then section by its
-     * name's sort_order — so two seed runs pick the same sections and
-     * updateOrCreate stays idempotent.
+     * It used to take one section per class, and two from Class 9 up — 36 of
+     * the school's 98. That understated the shape of the school badly: each
+     * junior class really runs five Bangla sections (Daffodil, Dahlia, Dolon,
+     * Mohua, Shapla) and two English (Aster, Orchid), so the demo showed a
+     * one-section-per-class institution that does not exist, and 62 sections
+     * the class browser lists had no students behind them at all.
+     *
+     * Deterministically ordered — class by numeric_order, then version, group
+     * and the section name's sort_order — so two seed runs walk the sections in
+     * the same order. That matters beyond tidiness: student_code is built from
+     * the section, and seedTypeForRoll varies the risk profile by the section's
+     * position in this list, so a stable order is what keeps the seeder
+     * idempotent.
      *
      * @return Collection<int, Section>
      */
@@ -200,7 +197,7 @@ class PpsAdministrationSeeder extends Seeder
             );
         }
 
-        $picked = $all
+        return self::$demoSectionCache = $all
             ->sortBy(fn (Section $s) => [
                 $s->classLevel?->numeric_order ?? 999,
                 $s->classLevel?->version?->name ?? '',
@@ -208,20 +205,7 @@ class PpsAdministrationSeeder extends Seeder
                 $s->sectionName?->sort_order ?? 999,
                 $s->id,
             ])
-            ->groupBy('class_level_id')
-            ->map(function (Collection $sections): Collection {
-                $order = $sections->first()->classLevel?->numeric_order;
-
-                $take = $order !== null && $order >= self::SENIOR_FROM_NUMERIC_ORDER
-                    ? self::SECTIONS_PER_SENIOR_CLASS
-                    : self::SECTIONS_PER_CLASS;
-
-                return $sections->take($take);
-            })
-            ->flatten()
             ->values();
-
-        return self::$demoSectionCache = $picked;
     }
 
     /**
