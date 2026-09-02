@@ -7,6 +7,9 @@ namespace App\Http\Controllers\Api\V1\Pps;
 use App\Http\Controllers\Controller;
 use App\Models\Pps\ComputedScore;
 use App\Models\Pps\Exam;
+use App\Models\Pps\ExamClassMap;
+use App\Models\Pps\ExamComponent;
+use App\Models\Pps\ExamType;
 use App\Models\Pps\GradeConfig;
 use App\Models\Pps\Mark;
 use App\Models\Pps\TeacherAssignment;
@@ -15,7 +18,9 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use SmsCore\Models\AcademicYear;
 use SmsCore\Models\ClassLevel;
 use SmsCore\Models\Level;
@@ -99,6 +104,14 @@ class AdministrationController extends Controller
                 ->with('level:id,name', 'version:id,name')
                 ->orderBy('full_name')
                 ->get(),
+            // The exam form cannot ask for an exam_type_id it has never been
+            // told about, and exam_type_id is REQUIRED to create an exam. This
+            // list is that vocabulary; without it the editor had nothing to put
+            // in the selector and posted a payload the API rejected outright.
+            'exam_types' => ExamType::query()
+                ->where('is_active', true)
+                ->orderBy('name')
+                ->get(['id', 'name', 'code', 'is_terminal']),
             'exams' => Exam::query()
                 ->with('examType:id,code,name', 'components', 'classMaps')
                 ->orderByDesc('exam_date')
@@ -425,12 +438,31 @@ class AdministrationController extends Controller
 
     // ─── Exams ───────────────────────────────────────────────────────────────
 
+    /**
+     * An exam is three tables, not one.
+     *
+     * `pps_exams` alone is inert: marks are entered against
+     * `pps_exam_components` (pps_marks.component_id points at one) and the
+     * students an exam covers come from `pps_exam_class_map`. An endpoint that
+     * wrote only the parent row produced an exam that could never receive a
+     * single mark, which is what the seeder has always known — it builds both
+     * children for every exam it creates.
+     *
+     * So the payload carries them: `components[]` and `class_maps[]` are
+     * validated and written inside the same transaction as the exam row.
+     */
     public function storeExam(Request $request): JsonResponse
     {
         $data = $request->validate($this->examRules());
 
-        return DB::transaction(function () use ($data): JsonResponse {
-            $exam = Exam::query()->create($data);
+        return DB::transaction(function () use ($data, $request): JsonResponse {
+            $components = Arr::pull($data, 'components', []);
+            $classMaps = Arr::pull($data, 'class_maps', []);
+
+            $exam = Exam::query()->create($data + ['created_by' => $request->user()?->id]);
+
+            $this->syncExamComponents($exam, $components);
+            $this->syncExamClassMaps($exam, $classMaps);
 
             return response()->json([
                 'exam' => $exam->load('examType:id,code,name', 'components', 'classMaps'),
@@ -443,7 +475,13 @@ class AdministrationController extends Controller
         $data = $request->validate($this->examRules($exam));
 
         return DB::transaction(function () use ($data, $exam): JsonResponse {
+            $components = Arr::pull($data, 'components', []);
+            $classMaps = Arr::pull($data, 'class_maps', []);
+
             $exam->update($data);
+
+            $this->syncExamComponents($exam, $components);
+            $this->syncExamClassMaps($exam, $classMaps);
 
             return response()->json([
                 'exam' => $exam->fresh()->load('examType:id,code,name', 'components', 'classMaps'),
@@ -469,6 +507,183 @@ class AdministrationController extends Controller
         return response()->json(['deleted' => true]);
     }
 
+    /**
+     * Reconcile an exam's components against the submitted rows.
+     *
+     * `pps_marks.component_id` is `cascadeOnDelete`, so deleting a component
+     * silently destroys every mark ever entered against it. A component the
+     * caller still lists is therefore UPDATED IN PLACE — identified by its `id`
+     * — never dropped and recreated, because a recreated row is a new id and the
+     * marks would be gone. A component the caller has dropped from the list is
+     * deleted only if nothing has been entered against it; otherwise the whole
+     * request is refused with a 422 naming the components, and the transaction
+     * rolls back.
+     *
+     * @param  array<int, array<string, mixed>>  $rows
+     */
+    private function syncExamComponents(Exam $exam, array $rows): void
+    {
+        $existing = $exam->components()->get()->toBase()->keyBy('id');
+
+        $keptIds = collect($rows)
+            ->pluck('id')
+            ->filter(fn ($id) => $id !== null)
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        $dropped = $existing->keys()->diff($keptIds);
+
+        if ($dropped->isNotEmpty()) {
+            $withMarks = Mark::query()
+                ->whereIn('component_id', $dropped->all())
+                ->distinct()
+                ->pluck('component_id');
+
+            if ($withMarks->isNotEmpty()) {
+                $names = $existing->only($withMarks->all())->pluck('name')->implode(', ');
+
+                throw ValidationException::withMessages([
+                    'components' => "Marks have already been entered against \"{$names}\". "
+                        .'Delete those marks before removing the component, or keep the component in the exam.',
+                ]);
+            }
+
+            $exam->components()->whereIn('id', $dropped->all())->delete();
+        }
+
+        $prepared = [];
+        $codes = [];
+
+        foreach (array_values($rows) as $index => $row) {
+            $name = trim((string) $row['name']);
+            $code = mb_strtoupper(trim((string) ($row['code'] ?? '')));
+
+            if ($code === '') {
+                $code = $this->componentCodeFrom($name, $codes);
+            } elseif (in_array($code, $codes, true)) {
+                throw ValidationException::withMessages([
+                    "components.{$index}.code" => "Component code \"{$code}\" is used more than once in this exam.",
+                ]);
+            }
+
+            $codes[] = $code;
+
+            $id = isset($row['id']) ? (int) $row['id'] : null;
+
+            $prepared[] = [
+                'model' => $id !== null ? $existing->get($id) : null,
+                'attributes' => [
+                    'name' => $name,
+                    'code' => $code,
+                    'max_raw_marks' => (float) $row['max_raw_marks'],
+                    'max_contribution' => (float) $row['max_contribution'],
+                    'sort_order' => $index + 1,
+                ],
+            ];
+        }
+
+        // (exam_id, code) is unique, so two surviving components swapping codes
+        // in one request would collide mid-write. Park every changing code on a
+        // value nothing else can hold before applying the final ones.
+        foreach ($prepared as $entry) {
+            $model = $entry['model'];
+
+            if ($model !== null && $model->code !== $entry['attributes']['code']) {
+                $model->update(['code' => "__SYNC_{$model->id}"]);
+            }
+        }
+
+        foreach ($prepared as $entry) {
+            if ($entry['model'] instanceof ExamComponent) {
+                // Update, never delete-and-recreate: the id is what pps_marks
+                // hangs off, so keeping it is what keeps the marks.
+                $entry['model']->update($entry['attributes']);
+
+                continue;
+            }
+
+            $exam->components()->create($entry['attributes']);
+        }
+    }
+
+    /**
+     * A code the exam does not already use, derived from the component's name.
+     *
+     * `pps_exam_components.code` is NOT NULL and unique per exam, so a form that
+     * leaves it blank still has to produce one.
+     *
+     * @param  array<int, string>  $taken
+     */
+    private function componentCodeFrom(string $name, array $taken): string
+    {
+        $base = mb_substr(mb_strtoupper(Str::slug($name, '_')), 0, 36);
+
+        if ($base === '') {
+            $base = 'COMPONENT';
+        }
+
+        $code = $base;
+        $suffix = 2;
+
+        while (in_array($code, $taken, true)) {
+            $code = $base.'_'.$suffix;
+            $suffix++;
+        }
+
+        return $code;
+    }
+
+    /**
+     * Reconcile an exam's class maps against the submitted rows.
+     *
+     * Nothing hangs off a class map — it is pure scope — so rows the caller
+     * dropped are simply deleted. Rows are matched on the triple the table is
+     * unique over, which also collapses duplicates in the payload rather than
+     * hitting the constraint.
+     *
+     * @param  array<int, array<string, mixed>>  $rows
+     */
+    private function syncExamClassMaps(Exam $exam, array $rows): void
+    {
+        $desired = collect($rows)
+            ->map(fn (array $row): array => [
+                'class_level_id' => (int) $row['class_level_id'],
+                'section_id' => isset($row['section_id']) ? (int) $row['section_id'] : null,
+                'subject_id' => isset($row['subject_id']) ? (int) $row['subject_id'] : null,
+            ])
+            ->keyBy(fn (array $row): string => implode('|', [
+                $row['class_level_id'],
+                $row['section_id'] ?? '',
+                $row['subject_id'] ?? '',
+            ]));
+
+        // toBase(): Eloquent\Collection re-keys itself by primary key inside
+        // except()/only(), which would silently ignore the composite key below.
+        $existing = $exam->classMaps()->get()->toBase()->keyBy(
+            fn (ExamClassMap $map): string => implode('|', [
+                $map->class_level_id,
+                $map->section_id ?? '',
+                $map->subject_id ?? '',
+            ])
+        );
+
+        $stale = $existing->reject(fn (ExamClassMap $map, string $key): bool => $desired->has($key))
+            ->pluck('id')
+            ->all();
+
+        if ($stale !== []) {
+            $exam->classMaps()->whereIn('id', $stale)->delete();
+        }
+
+        foreach ($desired as $key => $row) {
+            if ($existing->has($key)) {
+                continue;
+            }
+
+            $exam->classMaps()->create($row);
+        }
+    }
+
     /** @return array<string, mixed> */
     private function examRules(?Exam $exam = null): array
     {
@@ -481,7 +696,66 @@ class AdministrationController extends Controller
             'scope'        => ['nullable', 'string', 'max:50'],
             'is_active'    => ['sometimes', 'boolean'],
             'status'       => ['sometimes', 'string', 'max:30'],
+
+            // Marks are entered against a component, so an exam with none of
+            // them cannot receive a single mark. At least one is required.
+            'components'                     => ['required', 'array', 'min:1'],
+            'components.*.id'                => [
+                'nullable',
+                'integer',
+                Rule::exists('pps_exam_components', 'id')->where('exam_id', $exam?->id ?? 0),
+            ],
+            'components.*.name'              => ['required', 'string', 'max:80'],
+            'components.*.code'              => ['nullable', 'string', 'max:40'],
+            'components.*.max_raw_marks'     => ['required', 'numeric', 'gt:0'],
+            'components.*.max_contribution'  => ['required', 'numeric', 'gt:0'],
+
+            // Which classes, sections and subjects the exam covers. A null
+            // section_id means "all sections of that class"; a null subject_id
+            // means "all subjects". An exam with no class maps only reaches
+            // students if its scope is 'global'.
+            'class_maps'                  => ['sometimes', 'array'],
+            'class_maps.*.class_level_id' => ['required', 'integer', 'exists:class_levels,id'],
+            'class_maps.*.section_id'     => [
+                'nullable',
+                'integer',
+                'exists:sections,id',
+                $this->sectionBelongsToItsClassLevel(),
+            ],
+            'class_maps.*.subject_id'     => ['nullable', 'integer', 'exists:subjects,id'],
         ];
+    }
+
+    /**
+     * A section belongs to exactly one class level, so pairing "Class 9
+     * (Bangla)" with a section of "Class 9 (English)" scopes the exam to nobody
+     * — the two filters intersect to the empty set and every mark submission is
+     * then refused as out of scope. Silent emptiness is the worst failure mode
+     * here, so the mismatch is rejected at the door.
+     */
+    private function sectionBelongsToItsClassLevel(): callable
+    {
+        return function (string $attribute, mixed $value, callable $fail): void {
+            if ($value === null) {
+                return;
+            }
+
+            $index = explode('.', $attribute)[1] ?? null;
+            $classLevelId = request()->input("class_maps.{$index}.class_level_id");
+
+            if ($classLevelId === null) {
+                return;
+            }
+
+            $belongs = Section::query()
+                ->whereKey($value)
+                ->where('class_level_id', $classLevelId)
+                ->exists();
+
+            if (! $belongs) {
+                $fail('The selected section does not belong to the selected class.');
+            }
+        };
     }
 
     // ─── Teacher assignments ─────────────────────────────────────────────────

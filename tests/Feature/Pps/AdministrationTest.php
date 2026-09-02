@@ -78,6 +78,9 @@ class AdministrationTest extends TestCase
             'version_id' => $versionId,
         ])->assertCreated()->json('subject.id');
 
+        // An exam is three tables. `pps_exams` alone can receive no marks —
+        // they are entered against `pps_exam_components` — and reaches no
+        // students without `pps_exam_class_map`, so the endpoint takes both.
         $session->postJson('/api/v1/pps/admin/exams', [
             'title' => 'Half Yearly 2026',
             'exam_type_id' => $this->examType('mid_term', 'Mid Term')->id,
@@ -85,7 +88,16 @@ class AdministrationTest extends TestCase
             'term' => 1,
             'exam_date' => '2026-04-20',
             'scope' => 'class',
-        ])->assertCreated();
+            'components' => [
+                ['name' => 'Written', 'code' => 'WRITTEN', 'max_raw_marks' => 70, 'max_contribution' => 70],
+                ['name' => 'MCQ', 'code' => 'MCQ', 'max_raw_marks' => 30, 'max_contribution' => 30],
+            ],
+            'class_maps' => [
+                ['class_level_id' => $classLevelId, 'section_id' => $sectionId, 'subject_id' => $subjectId],
+            ],
+        ])->assertCreated()
+            ->assertJsonCount(2, 'exam.components')
+            ->assertJsonCount(1, 'exam.class_maps');
 
         // teacher_id points at `teachers`, not at `users`: most staff have no
         // login, and a login is not evidence of being staff.
@@ -133,6 +145,10 @@ class AdministrationTest extends TestCase
             // The class form's vocabulary: level and version are required to
             // create a class level, and `group` replaced departments/streams.
             ->assertJsonStructure(['levels' => [['id', 'name']], 'versions' => [['id', 'name']], 'groups' => [['id', 'name']]])
+            // exam_type_id is required to create an exam, so the form has to
+            // be told which types exist. It was not in this payload at all.
+            ->assertJsonStructure(['exam_types' => [['id', 'name', 'code', 'is_terminal']]])
+            ->assertJsonPath('exam_types.0.code', 'mid_term')
             ->assertJsonPath('groups.0.id', 'science')
             ->assertJsonPath('summary.classes', 1)
             ->assertJsonPath('summary.class_sections', 1)
