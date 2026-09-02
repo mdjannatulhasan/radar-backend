@@ -52,5 +52,29 @@ class AppServiceProvider extends ServiceProvider
                 Limit::perMinute(10)->by('pps-auth-email:'.$email),
             ];
         });
+
+        // Authenticated platform console traffic. It gets its own limiter
+        // because pps-api keys on $request->user(), which resolves the default
+        // guard and is therefore always null for an admin — every platform
+        // admin behind one office IP would have shared a single pps-api bucket
+        // with that office's school traffic.
+        RateLimiter::for('platform-api', function (Request $request): array {
+            $identity = $request->user('admin')?->getAuthIdentifier() ?: $request->ip();
+
+            return [Limit::perMinute(120)->by('platform-api:'.$identity)];
+        });
+
+        // Platform super-admin login. Same shape and same numbers as pps-auth,
+        // on its own key space so the two cannot exhaust each other: a school
+        // full of people fat-fingering their password must not lock the
+        // operator out of the console, and vice versa.
+        RateLimiter::for('platform-auth', function (Request $request): array {
+            $email = strtolower(trim($request->input('email', 'guest')));
+
+            return [
+                Limit::perMinute(5)->by('platform-auth:'.$request->ip()),
+                Limit::perMinute(10)->by('platform-auth-email:'.$email),
+            ];
+        });
     }
 }

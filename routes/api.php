@@ -1,6 +1,8 @@
 <?php
 
 use App\Http\Controllers\Api\V1\Auth\AuthController;
+use App\Http\Controllers\Api\V1\Platform\PlatformAuthController;
+use App\Http\Controllers\Api\V1\Platform\PlatformTenantController;
 use App\Http\Controllers\Api\V1\Pps\AlertController;
 use App\Http\Controllers\Api\V1\Pps\AdministrationController;
 use App\Http\Controllers\Api\V1\Pps\MarksController;
@@ -24,6 +26,38 @@ use App\Http\Controllers\Api\V1\Pps\RolePermissionController;
 use App\Http\Controllers\Api\V1\Pps\WelfareController;
 use App\Http\Controllers\Api\V1\Pps\ClassStructureController;
 use Illuminate\Support\Facades\Route;
+
+/*
+|--------------------------------------------------------------------------
+| Platform console — central host only
+|--------------------------------------------------------------------------
+|
+| The mirror of the school API below. `tenant` still runs first (it is what
+| decides whether this host names a school at all), then `central` 404s the
+| request if it did resolve one. So radar.test serves these and
+| cpscs.radar.test does not, exactly as cpscs.radar.test serves /api/v1/pps/*
+| and radar.test does not.
+|
+| Everything here reads and writes central tables only. A platform admin token
+| is not a school token: see config/auth.php for why the two cannot cross.
+|
+*/
+Route::prefix('v1/platform/auth')
+    ->middleware(['tenant', 'central', 'throttle:platform-auth', 'pps.security'])
+    ->group(function (): void {
+        Route::post('/login', [PlatformAuthController::class, 'login']);
+    });
+
+Route::prefix('v1/platform')
+    ->middleware(['tenant', 'central', 'auth:admin', 'platform.admin', 'throttle:platform-api', 'pps.security'])
+    ->group(function (): void {
+        Route::get('/auth/me', [PlatformAuthController::class, 'me']);
+        Route::post('/auth/logout', [PlatformAuthController::class, 'logout']);
+
+        Route::get('/tenants', [PlatformTenantController::class, 'index']);
+        Route::post('/tenants', [PlatformTenantController::class, 'store']);
+        Route::patch('/tenants/{tenant}/products/{product}', [PlatformTenantController::class, 'updateProduct']);
+    });
 
 Route::prefix('v1/auth')
     ->middleware(['tenant', 'product:radar', 'throttle:pps-auth', 'pps.security'])
