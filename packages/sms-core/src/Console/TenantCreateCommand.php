@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace SmsCore\Console;
 
 use Illuminate\Console\Command;
-use SmsCore\Models\Tenant;
-use SmsCore\Models\TenantProduct;
+use RuntimeException;
+use SmsCore\Services\TenantProvisioner;
 
 class TenantCreateCommand extends Command
 {
@@ -18,49 +18,34 @@ class TenantCreateCommand extends Command
 
     protected $description = 'Provision a tenant: create its Postgres schema, run tenant migrations, enable products.';
 
-    public function handle(): int
+    /**
+     * The steps themselves live in TenantProvisioner, because the platform
+     * console provisions over HTTP and must not run a second copy of them.
+     * This command is now the CLI skin on that service.
+     */
+    public function handle(TenantProvisioner $provisioner): int
     {
         $slug = $this->argument('slug');
+        $products = array_filter(array_map('trim', explode(',', $this->option('products'))));
 
-        if (Tenant::where('slug', $slug)->exists()) {
-            $this->error("Tenant '{$slug}' already exists.");
+        $this->info("Creating tenant '{$slug}' …");
+
+        try {
+            $tenant = $provisioner->provision(
+                $slug,
+                $this->argument('name'),
+                $products,
+                $this->option('status'),
+            );
+        } catch (RuntimeException $e) {
+            $this->error($e->getMessage());
 
             return self::FAILURE;
         }
 
-        $this->info("Creating tenant '{$slug}' …");
-
-        $tenant = Tenant::create([
-            'id' => $slug,
-            'slug' => $slug,
-            'name' => $this->argument('name'),
-            'provisioning_status' => 'migrating',
-        ]);
-
-        $this->info("Schema tenant_{$slug} created. Running tenant migrations …");
-
-        $this->call('tenants:migrate', ['--tenants' => [$tenant->id]]);
-
-        foreach (explode(',', $this->option('products')) as $product) {
-            $product = trim($product);
-
-            if ($product === '') {
-                continue;
-            }
-
-            TenantProduct::create([
-                'tenant_id' => $tenant->id,
-                'product' => $product,
-                'status' => $this->option('status'),
-            ]);
-
-            $this->line("  enabled product: {$product} ({$this->option('status')})");
+        foreach ($tenant->products as $product) {
+            $this->line("  enabled product: {$product->product} ({$product->status})");
         }
-
-        $tenant->update([
-            'provisioning_status' => 'ready',
-            'migrated_at' => now(),
-        ]);
 
         $this->info("Tenant '{$slug}' is ready at {$slug}.".config('tenancy.central_domains')[0]);
 
