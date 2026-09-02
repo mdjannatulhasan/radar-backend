@@ -124,8 +124,16 @@ class AdministrationTest extends TestCase
 
         $session->getJson('/api/v1/pps/admin/overview')
             ->assertOk()
-            // "departments" is now the count of distinct class groups.
-            ->assertJsonPath('summary.departments', 1)
+            // No summary.departments: it counted distinct class_levels.group
+            // values under a dead resource's name, and the CHECK constraint
+            // fixes that at three, so it was never a number an admin moved.
+            ->assertJsonMissingPath('summary.departments')
+            ->assertJsonMissingPath('departments')
+            ->assertJsonMissingPath('streams')
+            // The class form's vocabulary: level and version are required to
+            // create a class level, and `group` replaced departments/streams.
+            ->assertJsonStructure(['levels' => [['id', 'name']], 'versions' => [['id', 'name']], 'groups' => [['id', 'name']]])
+            ->assertJsonPath('groups.0.id', 'science')
             ->assertJsonPath('summary.classes', 1)
             ->assertJsonPath('summary.class_sections', 1)
             ->assertJsonPath('summary.sections', 1)

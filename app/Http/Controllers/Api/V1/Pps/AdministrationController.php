@@ -18,6 +18,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use SmsCore\Models\AcademicYear;
 use SmsCore\Models\ClassLevel;
+use SmsCore\Models\Level;
 use SmsCore\Models\Section;
 use SmsCore\Models\SectionName;
 use SmsCore\Models\Student;
@@ -25,6 +26,7 @@ use SmsCore\Models\StudentEnrollment;
 use SmsCore\Models\Subject;
 use SmsCore\Models\Teacher;
 use SmsCore\Models\User;
+use SmsCore\Models\Version;
 use SmsCore\Support\TeacherShortCode;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -49,8 +51,11 @@ class AdministrationController extends Controller
     {
         return response()->json([
             'summary' => [
-                // "department" is now a group on a class level, not a row.
-                'departments' => ClassLevel::query()->whereNotNull('group')->distinct()->count('group'),
+                // No 'departments' count. It reported distinct class_levels.group
+                // values under a name that stopped meaning anything when the
+                // departments table was dropped: it always said 3, because the
+                // CHECK constraint allows exactly three groups. 'groups' below
+                // IS that list, and it is not a number an admin can move.
                 'class_sections' => Section::query()->count(),
                 'classes' => ClassLevel::query()->count(),
                 'sections' => SectionName::query()->count(),
@@ -64,8 +69,13 @@ class AdministrationController extends Controller
                 ->with('user:id,email,is_active')
                 ->orderBy('full_name')
                 ->get(['id', 'full_name', 'short_code', 'user_id', 'is_active']),
-            'departments' => self::GROUPS,
-            'streams' => self::GROUPS,
+            // The class form's own vocabulary. level_id and version_id are
+            // REQUIRED to create a class level, and `group` is what departments
+            // and streams both collapsed into — the form could not supply any
+            // of the three while this payload only carried the dead resources.
+            'levels' => Level::query()->orderBy('sort_order')->get(['id', 'name']),
+            'versions' => Version::query()->orderBy('sort_order')->get(['id', 'name']),
+            'groups' => self::GROUPS,
             'sections' => SectionName::query()
                 ->orderBy('sort_order')
                 ->orderBy('name')
