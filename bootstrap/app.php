@@ -24,6 +24,8 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'tenant' => \SmsCore\Http\Middleware\InitializeTenancyBySubdomain::class,
             'product' => \SmsCore\Http\Middleware\EnsureProductEnabled::class,
+            'central' => \SmsCore\Http\Middleware\EnsureCentralDomain::class,
+            'platform.admin' => \App\Http\Middleware\EnsurePlatformAdmin::class,
             'pps.role' => \App\Http\Middleware\PpsRoleMiddleware::class,
             'pps.permission' => \App\Http\Middleware\PpsPermissionMiddleware::class,
             'pps.permission_any' => \App\Http\Middleware\PpsPermissionAnyMiddleware::class,
@@ -56,6 +58,9 @@ return Application::configure(basePath: dirname(__DIR__))
             \Illuminate\View\Middleware\ShareErrorsFromSession::class,
             \SmsCore\Http\Middleware\InitializeTenancyBySubdomain::class,
             \SmsCore\Http\Middleware\EnsureProductEnabled::class,
+            // Same reason as the two above: it reads tenant(), so it must sort
+            // after InitializeTenancyBySubdomain and before auth:admin.
+            \SmsCore\Http\Middleware\EnsureCentralDomain::class,
             \Illuminate\Contracts\Auth\Middleware\AuthenticatesRequests::class,
             \Illuminate\Routing\Middleware\ThrottleRequests::class,
             \Illuminate\Routing\Middleware\ThrottleRequestsWithRedis::class,
