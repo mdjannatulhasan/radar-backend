@@ -113,9 +113,11 @@ class PlatformTenantController extends Controller
             array_intersect_key($data, array_flip(['status', 'plan', 'trial_ends_at', 'expires_at']))
         );
 
+        $model->load('products');
+
         return response()->json([
-            'product' => $this->productPayload($row),
-            'tenant' => $this->tenantPayload($model->load('products')),
+            'product' => $this->productPayload($row, $model),
+            'tenant' => $this->tenantPayload($model),
         ]);
     }
 
@@ -127,12 +129,17 @@ class PlatformTenantController extends Controller
             'provisioning_status' => $tenant->provisioning_status,
             'migrated_at' => $tenant->migrated_at?->toIso8601String(),
             'products' => $tenant->products
-                ->map(fn (TenantProduct $p): array => $this->productPayload($p))
+                ->map(fn (TenantProduct $p): array => $this->productPayload($p, $tenant))
                 ->values(),
         ];
     }
 
-    private function productPayload(TenantProduct $product): array
+    /**
+     * The owning tenant is passed in rather than read off the relation: every
+     * caller already holds it, and hasProduct() re-queries anyway, so lazily
+     * loading it here would add one SELECT per product for nothing.
+     */
+    private function productPayload(TenantProduct $product, Tenant $tenant): array
     {
         return [
             'product' => $product->product,
@@ -141,11 +148,11 @@ class PlatformTenantController extends Controller
             'trial_ends_at' => $product->trial_ends_at?->toIso8601String(),
             'expires_at' => $product->expires_at?->toIso8601String(),
             // Whether the gate would actually let this product through right
-            // now — status alone does not say, because an 'active' row can
-            // still be past expires_at.
-            'enabled' => $product->tenant?->hasProduct($product->product)
-                ?? Tenant::find($product->tenant_id)?->hasProduct($product->product)
-                ?? false,
+            // now. The status column alone does not say: an 'active' row that
+            // is past expires_at, or a trial past trial_ends_at, is not
+            // enabled. This asks the same method EnsureProductEnabled asks, so
+            // the console cannot disagree with the gate.
+            'enabled' => $tenant->hasProduct($product->product),
         ];
     }
 }
