@@ -531,6 +531,14 @@ class AdministrationController extends Controller
             ->map(fn ($id) => (int) $id)
             ->all();
 
+        // The same component listed twice would silently collapse to one row,
+        // and the caller would get back fewer components than they submitted.
+        if (count($keptIds) !== count(array_unique($keptIds))) {
+            throw ValidationException::withMessages([
+                'components' => 'The same component was submitted more than once.',
+            ]);
+        }
+
         $dropped = $existing->keys()->diff($keptIds);
 
         if ($dropped->isNotEmpty()) {
@@ -691,11 +699,20 @@ class AdministrationController extends Controller
             'title'        => ['required', 'string', 'max:255'],
             'exam_type_id' => ['required', 'exists:pps_exam_types,id'],
             'academic_year'=> ['required', 'integer', 'min:2000', 'max:2100'],
-            'term'         => ['nullable', 'integer'],
+            // `pps_exams.term` is an unsignedTinyInteger and NOT NULL. It was
+            // validated 'nullable', so an omitted term reached the insert and
+            // came back as a 500 from Postgres instead of a 422.
+            'term'         => ['required', 'integer', 'min:1', 'max:255'],
             'exam_date'    => ['nullable', 'date'],
-            'scope'        => ['nullable', 'string', 'max:50'],
+            // Both columns are string(20) — 'max:50' and 'max:30' let a value
+            // through that the insert then rejects. The values themselves are a
+            // closed set: MarksController treats anything but 'global' as
+            // class-scoped, and MarksMetaController hides 'draft' exams, so a
+            // typo in either would silently change what an exam covers or who
+            // can see it.
+            'scope'        => ['nullable', Rule::in(['class', 'global'])],
             'is_active'    => ['sometimes', 'boolean'],
-            'status'       => ['sometimes', 'string', 'max:30'],
+            'status'       => ['sometimes', Rule::in(['draft', 'published', 'archived'])],
 
             // Marks are entered against a component, so an exam with none of
             // them cannot receive a single mark. At least one is required.

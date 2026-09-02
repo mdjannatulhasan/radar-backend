@@ -120,6 +120,45 @@ class ExamEditorTest extends TestCase
     }
 
     /**
+     * `pps_exams.term` is NOT NULL. It was validated 'nullable', so an omitted
+     * term reached the insert and came back as a 500 from Postgres — and the
+     * exam form's term box starts empty, so that was one blank field away.
+     */
+    public function test_an_exam_without_a_term_is_refused_rather_than_exploding(): void
+    {
+        $payload = $this->payload();
+        unset($payload['term']);
+
+        $this->signInPps($this->admin())
+            ->postJson('/api/v1/pps/admin/exams', $payload)
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('term');
+
+        $this->assertSame(0, Exam::count());
+    }
+
+    /**
+     * `scope` and `status` are string(20) columns whose values are a closed
+     * set: MarksController treats anything but 'global' as class-scoped, and
+     * MarksMetaController hides 'draft'. A typo in either would silently change
+     * what an exam covers or who can see it.
+     */
+    public function test_unknown_scope_and_status_values_are_refused(): void
+    {
+        $session = $this->signInPps($this->admin());
+
+        $session->postJson('/api/v1/pps/admin/exams', $this->payload(['scope' => 'schoolwide']))
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('scope');
+
+        $session->postJson('/api/v1/pps/admin/exams', $this->payload(['status' => 'live']))
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('status');
+
+        $this->assertSame(0, Exam::count());
+    }
+
+    /**
      * A section belongs to exactly one class level. Pairing a class with a
      * section of a DIFFERENT class scopes the exam to the empty set — the two
      * filters intersect to nobody — and every later mark submission is refused
@@ -321,6 +360,53 @@ class ExamEditorTest extends TestCase
             ['WRITTEN_PAPER', 'WRITTEN_PAPER_2'],
             collect($created->json('exam.components'))->pluck('code')->all(),
         );
+    }
+
+    /**
+     * This is a Bangladeshi school, so a component name is often Bangla — and
+     * `Str::slug` strips it to nothing. The derived code still has to satisfy a
+     * NOT NULL, unique-per-exam column rather than collapsing to one value.
+     */
+    public function test_bangla_component_names_still_derive_usable_codes(): void
+    {
+        $created = $this->signInPps($this->admin())
+            ->postJson('/api/v1/pps/admin/exams', $this->payload([
+                'components' => [
+                    ['name' => 'লিখিত', 'max_raw_marks' => 70, 'max_contribution' => 70],
+                    ['name' => 'নৈর্ব্যক্তিক', 'max_raw_marks' => 30, 'max_contribution' => 30],
+                ],
+            ]))
+            ->assertCreated();
+
+        $codes = collect($created->json('exam.components'))->pluck('code');
+
+        $this->assertCount(2, $codes->unique(), 'two components may not share a code');
+        $this->assertTrue($codes->every(fn (?string $code) => $code !== null && $code !== ''));
+    }
+
+    /**
+     * Listing the same component twice would collapse two submitted rows into
+     * one saved row, and the caller would never be told.
+     */
+    public function test_the_same_component_may_not_be_submitted_twice(): void
+    {
+        $session = $this->signInPps($this->admin());
+
+        $created = $session->postJson('/api/v1/pps/admin/exams', $this->payload())->assertCreated();
+
+        $examId = (int) $created->json('exam.id');
+        $writtenId = (int) collect($created->json('exam.components'))->firstWhere('code', 'WRITTEN')['id'];
+
+        $session->patchJson("/api/v1/pps/admin/exams/{$examId}", $this->payload([
+            'components' => [
+                ['id' => $writtenId, 'name' => 'Written', 'code' => 'WRITTEN', 'max_raw_marks' => 70, 'max_contribution' => 70],
+                ['id' => $writtenId, 'name' => 'Written Again', 'code' => 'WRITTEN_2', 'max_raw_marks' => 30, 'max_contribution' => 30],
+            ],
+        ]))
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('components');
+
+        $this->assertSame(3, ExamComponent::where('exam_id', $examId)->count());
     }
 
     /**
