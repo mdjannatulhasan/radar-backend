@@ -14,8 +14,6 @@ final class PpsPermissions
     public const STUDENT_COUNSELING_VIEW = 'pps.students.counseling.view';
     public const CLASS_ANALYTICS_VIEW = 'pps.classes.analytics.view';
     public const TEACHER_EFFECTIVENESS_VIEW = 'pps.teachers.effectiveness.view';
-    public const ASSESSMENTS_VIEW   = 'pps.assessments.view';   // read-only: results, report cards, marks grid
-    public const ASSESSMENTS_MANAGE = 'pps.assessments.manage'; // read+write: enter/save marks, compute GPA
     public const ATTENDANCE_MANAGE = 'pps.attendance.manage';
     public const BEHAVIOR_MANAGE = 'pps.behavior.manage';
     public const CLASSROOM_RATINGS_MANAGE = 'pps.classroom_ratings.manage';
@@ -54,8 +52,6 @@ final class PpsPermissions
             self::STUDENT_COUNSELING_VIEW,
             self::CLASS_ANALYTICS_VIEW,
             self::TEACHER_EFFECTIVENESS_VIEW,
-            self::ASSESSMENTS_VIEW,
-            self::ASSESSMENTS_MANAGE,
             self::ATTENDANCE_MANAGE,
             self::BEHAVIOR_MANAGE,
             self::CLASSROOM_RATINGS_MANAGE,
@@ -99,7 +95,6 @@ final class PpsPermissions
                 self::STUDENT_COUNSELING_VIEW,
                 self::CLASS_ANALYTICS_VIEW,
                 self::TEACHER_EFFECTIVENESS_VIEW,
-                self::ASSESSMENTS_VIEW,   // read-only: view marks, results, report cards
                 self::SETTINGS_VIEW,
                 self::SETTINGS_UPDATE,
                 self::REPORTS_VIEW,
@@ -120,7 +115,6 @@ final class PpsPermissions
                 self::STUDENT_CONTEXT_VIEW,
                 self::STUDENT_WHAT_IF_RUN,
                 self::CLASS_ANALYTICS_VIEW,
-                self::ASSESSMENTS_MANAGE,
                 self::ATTENDANCE_MANAGE,
                 self::BEHAVIOR_MANAGE,
                 self::CLASSROOM_RATINGS_MANAGE,

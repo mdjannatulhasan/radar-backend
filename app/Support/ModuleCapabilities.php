@@ -28,7 +28,6 @@ final class ModuleCapabilities
         'teacher_workspace'   => ['view'            => ['teacher']],
         'classes'             => ['view'            => ['admin', 'principal', 'superadmin', 'teacher']],
         'teacher_effectiveness' => ['view'          => ['admin', 'principal', 'superadmin']],
-        'assessments'         => ['manage'          => ['admin', 'superadmin', 'teacher']],
         'attendance'          => ['manage'          => ['admin', 'superadmin', 'teacher']],
         'behavior'            => ['manage'          => ['admin', 'superadmin', 'teacher']],
         'classroom_ratings'   => ['manage'          => ['admin', 'superadmin', 'teacher']],

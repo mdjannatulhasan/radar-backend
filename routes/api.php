@@ -5,7 +5,6 @@ use App\Http\Controllers\Api\V1\Pps\AlertController;
 use App\Http\Controllers\Api\V1\Pps\AdministrationController;
 use App\Http\Controllers\Api\V1\Pps\MarksController;
 use App\Http\Controllers\Api\V1\Pps\MarksMetaController;
-use App\Http\Controllers\Api\V1\Pps\PretestMarksController;
 use App\Http\Controllers\Api\V1\Pps\ExamListController;
 use App\Http\Controllers\Api\V1\Pps\ResultSummaryController;
 use App\Http\Controllers\Api\V1\Pps\AttendanceController;
@@ -218,11 +217,6 @@ Route::prefix('v1/pps')
     Route::post('/marks', [MarksController::class, 'bulkStore'])
         ->middleware('pps.can:marks.write');
 
-    // Legacy marks entry — kept for pretest (not migrated)
-    Route::get('/marks/pretest', [PretestMarksController::class, 'index'])
-        ->middleware('pps.can:marks.read');
-    Route::post('/marks/pretest', [PretestMarksController::class, 'bulkStore'])
-        ->middleware('pps.can:marks.write');
 
     // Result summary — GET is read, POST compute is write
     Route::get('/results/meta', [ResultSummaryController::class, 'meta'])

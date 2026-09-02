@@ -8,6 +8,7 @@ use App\Support\ModuleCapabilities;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Tests\TestCase;
 
@@ -220,7 +221,7 @@ class RolePermissionControllerTest extends TestCase
     {
         // Teacher should have these
         $shouldHave = ['marks.read', 'marks.write', 'students.view', 'alerts.view',
-                       'assessments.manage', 'attendance.manage', 'behavior.manage',
+                       'attendance.manage', 'behavior.manage',
                        'classroom_ratings.manage', 'extracurricular.manage',
                        'notices.view', 'notifications.view'];
 
@@ -231,6 +232,31 @@ class RolePermissionControllerTest extends TestCase
                 "teacher should have {$cap}"
             );
         }
+    }
+
+    /**
+     * `assessments` was retired when marks replaced it. It guarded zero routes
+     * but still reached every client, because forRole() builds the login
+     * payload's capabilities straight from role_permissions and the seeder only
+     * ever upserted — so the rows an earlier run wrote outlived the module.
+     */
+    public function test_seeder_removes_retired_modules(): void
+    {
+        $this->assertArrayNotHasKey('assessments', ModuleCapabilities::MAP);
+
+        $this->assertSame(
+            0,
+            RolePermission::where('module', 'assessments')->count(),
+            'retired module assessments still has role_permissions rows',
+        );
+
+        $this->assertSame(
+            0,
+            DB::table('permission_modules')->where('product', 'radar')->where('name', 'assessments')->count(),
+            'retired module assessments is still listed in permission_modules',
+        );
+
+        $this->assertArrayNotHasKey('assessments', ModuleCapabilities::forRole('teacher'));
     }
 
     public function test_seeder_denies_correct_teacher_capabilities(): void
