@@ -20,6 +20,7 @@ use SmsCore\Models\Student;
 use SmsCore\Models\StudentEnrollment;
 use SmsCore\Models\Subject;
 use SmsCore\Models\Teacher;
+use SmsCore\Support\TeacherShortCode;
 use SmsCore\Models\User;
 use SmsCore\Models\Version;
 
@@ -150,12 +151,22 @@ trait TaxonomyFixtures
         return $student;
     }
 
-    /** The staff record behind a login. Assignments hang off this, not the user. */
+    /**
+     * The staff record behind a login. Assignments hang off this, not the user.
+     *
+     * short_code is NOT NULL and unique per school, so it is derived from the
+     * name the same way the application derives it — a fixture that omitted it
+     * would be building a teacher the schema does not allow to exist.
+     */
     protected function makeTeacher(User $user): Teacher
     {
         return $this->fixtureCache['teacher.'.$user->id] ??= Teacher::create([
             'school_id' => $this->school()->id,
             'full_name' => $user->name,
+            'short_code' => TeacherShortCode::unique(
+                $user->name,
+                Teacher::query()->where('school_id', $this->school()->id)->pluck('short_code')->all(),
+            ),
             'user_id' => $user->id,
         ]);
     }

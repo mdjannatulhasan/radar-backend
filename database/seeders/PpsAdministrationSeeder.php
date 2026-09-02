@@ -20,6 +20,7 @@ use SmsCore\Models\StudentEnrollment;
 use SmsCore\Models\Subject;
 use SmsCore\Models\Teacher;
 use SmsCore\Models\User;
+use SmsCore\Support\TeacherShortCode;
 
 /**
  * Resolves the real school structure the RADAR demo data hangs off, and adds
@@ -311,16 +312,44 @@ class PpsAdministrationSeeder extends Seeder
         return self::$passwordHashCache ??= Hash::make(self::DEMO_PASSWORD);
     }
 
-    /** The staff record behind a login; users.id is not a teacher id. */
+    /**
+     * The staff record behind a login; users.id is not a teacher id.
+     *
+     * teachers.short_code is NOT NULL — this seeder creating a teacher without
+     * one is the single reason the column used to be nullable. The code is
+     * derived from the name the same way the backfill migration derives it, and
+     * de-duplicated against the 159 imported CPSCS staff.
+     */
     public static function teacherFor(User $user): Teacher
     {
-        return Teacher::query()->firstOrCreate(
-            ['user_id' => $user->id],
-            [
-                'school_id' => $user->school_id ?? self::school()->id,
-                'full_name' => $user->name,
-                'is_active' => true,
-            ],
+        $schoolId = $user->school_id ?? self::school()->id;
+
+        $existing = Teacher::query()->where('user_id', $user->id)->first();
+
+        if ($existing !== null) {
+            // Re-run over a tenant seeded before short_code was required.
+            if ((string) $existing->short_code === '') {
+                $existing->update(['short_code' => self::deriveShortCode($user->name, $schoolId)]);
+            }
+
+            return $existing;
+        }
+
+        return Teacher::query()->create([
+            'user_id' => $user->id,
+            'school_id' => $schoolId,
+            'full_name' => $user->name,
+            'short_code' => self::deriveShortCode($user->name, $schoolId),
+            'is_active' => true,
+        ]);
+    }
+
+    /** A short code for $name that no other teacher in $schoolId already holds. */
+    private static function deriveShortCode(string $name, int $schoolId): string
+    {
+        return TeacherShortCode::unique(
+            $name,
+            Teacher::query()->where('school_id', $schoolId)->pluck('short_code')->all(),
         );
     }
 

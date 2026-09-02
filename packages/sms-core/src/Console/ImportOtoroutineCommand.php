@@ -298,10 +298,27 @@ class ImportOtoroutineCommand extends Command
     private function importTeachers(): void
     {
         foreach ($this->src('teachers')->orderBy('id')->get() as $row) {
+            // short_code is this import's identity key AND a NOT NULL column.
+            // A source row without one would otherwise be keyed on '' — every
+            // such teacher collapsing onto a single local row, the last name
+            // read silently overwriting all the others. Refuse instead: the
+            // source data has to be corrected, not guessed at.
+            $shortCode = trim((string) ($row->short_code ?? ''));
+
+            if ($shortCode === '') {
+                throw new \RuntimeException(sprintf(
+                    'Source teacher #%s ("%s") has no short_code. Every teacher must have one — '
+                    .'teachers.short_code is NOT NULL and is this import\'s identity key. '
+                    .'Fix the row in the source database and re-run.',
+                    $row->id,
+                    $row->full_name ?? '(unnamed)',
+                ));
+            }
+
             $local = Teacher::updateOrCreate(
                 [
                     'school_id' => $this->school->id,
-                    'short_code' => $row->short_code,
+                    'short_code' => $shortCode,
                 ],
                 [
                     'full_name' => $row->full_name,

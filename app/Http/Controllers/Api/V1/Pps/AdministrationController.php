@@ -25,6 +25,7 @@ use SmsCore\Models\StudentEnrollment;
 use SmsCore\Models\Subject;
 use SmsCore\Models\Teacher;
 use SmsCore\Models\User;
+use SmsCore\Support\TeacherShortCode;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -904,10 +905,19 @@ class AdministrationController extends Controller
                 'is_active' => $data['is_active'] ?? true,
             ]);
 
+            // teachers.short_code is NOT NULL — a teacher with no short code
+            // cannot be rendered on any grid. The field stays optional on the
+            // API; when the caller omits it, it is derived from the name and
+            // de-duplicated against the codes already used in this school.
+            $shortCode = $data['short_code'] ?? TeacherShortCode::unique(
+                $data['name'],
+                Teacher::query()->where('school_id', $schoolId)->pluck('short_code')->all(),
+            );
+
             return Teacher::query()->create([
                 'school_id'  => $schoolId,
                 'full_name'  => $data['name'],
-                'short_code' => $data['short_code'] ?? null,
+                'short_code' => $shortCode,
                 'user_id'    => $user->id,
                 'is_active'  => $data['is_active'] ?? true,
             ]);
