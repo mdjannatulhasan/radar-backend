@@ -168,4 +168,72 @@ class Student360Test extends TestCase
         $this->assertArrayHasKey('projected_overall', $payload['forecast']);
         $this->assertSame([], $payload['notifications']);
     }
+
+    public function test_principal_can_fetch_360_and_notify_teachers(): void
+    {
+        $principal = $this->createUser([
+            'name' => 'Principal', 'email' => 'principal2@example.test', 'role' => 'principal',
+            'password' => Hash::make('password'),
+        ]);
+        $mathUser = $this->createUser([
+            'name' => 'Math Teacher', 'email' => 'mt3@example.test', 'role' => 'teacher',
+            'password' => Hash::make('password'),
+        ]);
+        $classUser = $this->createUser([
+            'name' => 'Class Teacher', 'email' => 'ct3@example.test', 'role' => 'teacher',
+            'password' => Hash::make('password'),
+        ]);
+        $student = $this->makeStudent([
+            'student_code' => 'PPS-360-6', 'name' => 'Notify Student',
+            'class_name' => '8', 'section' => 'A', 'roll_number' => 9,
+        ]);
+        $this->assignTeacher($mathUser, '8', 'A', 'Mathematics');
+        $this->assignTeacher($classUser, '8', 'A', null, true);
+        $this->recordExamResult($student, 'Mathematics', '2026-06-15', 30);
+
+        $this->signInPps($principal)
+            ->getJson("/api/v1/pps/students/{$student->id}/360?years=2")
+            ->assertOk()
+            ->assertJsonPath('student.name', 'Notify Student')
+            ->assertJsonPath('years', 2)
+            ->assertJsonCount(1, 'marks_grid.columns');
+
+        $mathId = $this->subject('Mathematics')->id;
+
+        $response = $this->signInPps($principal)->postJson("/api/v1/pps/students/{$student->id}/notify-teachers", [
+            'subject_ids' => [$mathId],
+            'include_class_teacher' => true,
+            'message' => 'Please start a weekly remedial plan.',
+        ]);
+
+        $response->assertCreated()->assertJsonCount(2, 'sent');
+
+        $this->assertDatabaseHas('pps_notification_logs', [
+            'type' => 'student_360_teacher_alert',
+            'recipient_role' => 'subject_teacher',
+            'recipient_user_id' => $mathUser->id,
+            'student_id' => $student->id,
+            'body' => 'Please start a weekly remedial plan.',
+        ]);
+        $this->assertDatabaseHas('pps_notification_logs', [
+            'type' => 'student_360_teacher_alert',
+            'recipient_role' => 'class_teacher',
+            'recipient_user_id' => $classUser->id,
+        ]);
+
+        $this->signInPps($principal)
+            ->getJson("/api/v1/pps/students/{$student->id}/360")
+            ->assertOk()
+            ->assertJsonCount(2, 'notifications');
+
+        // Nothing selected → 422.
+        $this->signInPps($principal)
+            ->postJson("/api/v1/pps/students/{$student->id}/notify-teachers", ['subject_ids' => [], 'include_class_teacher' => false])
+            ->assertStatus(422);
+
+        // Teachers cannot trigger notifications.
+        $this->signInPps($mathUser)
+            ->postJson("/api/v1/pps/students/{$student->id}/notify-teachers", ['subject_ids' => [$mathId]])
+            ->assertForbidden();
+    }
 }

@@ -406,6 +406,89 @@ class Student360Service
             ->all();
     }
 
+    // ── Notify teachers ────────────────────────────────────────────────────
+
+    /**
+     * One pps_notification_logs row per assigned teacher matched by the
+     * selected subjects (role subject_teacher) or the class-teacher flag.
+     *
+     * @param  int[]  $subjectIds
+     * @return array<int, array{teacher_id: int, teacher_name: string|null, role: string, has_login: bool, log_id: int}>
+     */
+    public function notifyTeachers(Student $student, User $sender, array $subjectIds, bool $includeClassTeacher, ?string $message, string $period): array
+    {
+        $assignments = $this->assignmentsForSection($student->section_id);
+        $targets = [];
+
+        foreach ($assignments as $assignment) {
+            if ($assignment->teacher === null) {
+                continue;
+            }
+            $teacherId = (int) $assignment->teacher_id;
+            if ($assignment->subject_id !== null && in_array((int) $assignment->subject_id, $subjectIds, true)) {
+                $targets[$teacherId] ??= ['assignment' => $assignment, 'role' => 'subject_teacher', 'subjects' => []];
+                $targets[$teacherId]['subjects'][] = $assignment->subject?->full_name;
+            } elseif ($includeClassTeacher && $assignment->is_class_teacher) {
+                $targets[$teacherId] ??= ['assignment' => $assignment, 'role' => 'class_teacher', 'subjects' => []];
+            }
+        }
+
+        if ($targets === []) {
+            return [];
+        }
+
+        $taxonomy = StudentTaxonomyFilter::present($student);
+        $classLabel = trim(($taxonomy['class_name'] ?? '').' '.($taxonomy['section_name'] ?? ''));
+        $body = $message !== null && trim($message) !== ''
+            ? trim($message)
+            : $this->defaultNotifyBody($student, $period);
+
+        $sent = [];
+        foreach ($targets as $teacherId => $target) {
+            $subjects = array_values(array_filter($target['subjects']));
+            $log = PpsNotificationLog::query()->create([
+                'type' => self::NOTIFICATION_TYPE,
+                'channel' => 'database',
+                'recipient_role' => $target['role'],
+                'recipient_user_id' => $target['assignment']->teacher?->user_id,
+                'student_id' => $student->id,
+                'snapshot_period' => $period,
+                'subject' => mb_substr(sprintf('Early warning: %s (%s)%s', $student->name, $classLabel, $subjects === [] ? '' : ' — '.implode(', ', $subjects)), 0, 180),
+                'body' => $body,
+                'meta' => [
+                    'source' => 'student_360',
+                    'teacher_id' => $teacherId,
+                    'teacher_name' => $target['assignment']->teacher?->full_name,
+                    'subject_ids' => $subjectIds,
+                    'sent_by' => $sender->id,
+                ],
+                'generated_at' => now(),
+            ]);
+
+            $sent[] = [
+                'teacher_id' => $teacherId,
+                'teacher_name' => $target['assignment']->teacher?->full_name,
+                'role' => $target['role'],
+                'has_login' => $target['assignment']->teacher?->user_id !== null,
+                'log_id' => $log->id,
+            ];
+        }
+
+        return $sent;
+    }
+
+    private function defaultNotifyBody(Student $student, string $period): string
+    {
+        $snapshot = PerformanceSnapshot::query()->where('student_id', $student->id)->forPeriod($period)->first();
+        $grid = $this->buildMarksGrid($student, 1);
+        $why = $this->buildWhy($student, $snapshot, $grid['rows'], SchoolPpsConfig::current());
+        $lines = array_map(fn (array $w) => '- '.$w['text'], $why);
+
+        return $lines === []
+            ? "{$student->name} needs early academic follow-up. Please review and respond with a short plan."
+            : "{$student->name} needs early academic follow-up:\n".implode("\n", $lines)."\nPlease review and respond with a short plan.";
+    }
+
     // ── Marks grid ─────────────────────────────────────────────────────────
 
     /**

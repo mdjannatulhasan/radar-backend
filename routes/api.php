@@ -21,6 +21,7 @@ use App\Http\Controllers\Api\V1\Pps\ParentViewController;
 use App\Http\Controllers\Api\V1\Pps\ReportController;
 use App\Http\Controllers\Api\V1\Pps\SchoolPpsConfigController;
 use App\Http\Controllers\Api\V1\Pps\StudentPerformanceController;
+use App\Http\Controllers\Api\V1\Pps\Student360Controller;
 use App\Http\Controllers\Api\V1\Pps\UserManagementController;
 use App\Http\Controllers\Api\V1\Pps\RolePermissionController;
 use App\Http\Controllers\Api\V1\Pps\WelfareController;
@@ -98,6 +99,16 @@ Route::prefix('v1/pps')
         ->middleware('pps.can:students.what_if');
     Route::get('/students/{student}/counseling', [CounselingController::class, 'studentSessions'])
         ->middleware('pps.can:students.counseling');
+
+    // Student 360 — single-page view; lives beside the classic profile.
+    Route::get('/students/{student}/360', [Student360Controller::class, 'show'])
+        ->middleware('pps.can:students.view');
+    Route::post('/students/{student}/notify-teachers', [Student360Controller::class, 'notifyTeachers'])
+        ->middleware('pps.can:notifications.run');
+    Route::post('/students/{student}/tuitions', [Student360Controller::class, 'storeTuition'])
+        ->middleware('pps.can:students.context_update');
+    Route::delete('/students/{student}/tuitions/{tuition}', [Student360Controller::class, 'destroyTuition'])
+        ->middleware('pps.can:students.context_update');
 
     Route::get('/classes/structure', [ClassStructureController::class, 'index'])
         ->middleware('pps.can:students.view');
