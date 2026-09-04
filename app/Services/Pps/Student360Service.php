@@ -37,6 +37,375 @@ class Student360Service
     ) {
     }
 
+    // ── Whole page ─────────────────────────────────────────────────────────
+
+    public function build(Student $student, ?User $viewer, string $period, int $years): array
+    {
+        $snapshot = PerformanceSnapshot::query()
+            ->where('student_id', $student->id)->forPeriod($period)->first();
+        $previous = PerformanceSnapshot::query()
+            ->where('student_id', $student->id)
+            ->where('snapshot_period', '<', $period)
+            ->orderByDesc('snapshot_period')
+            ->first();
+
+        $sectionId = $student->section_id;
+        $assignments = $this->assignmentsForSection($sectionId);
+        $grid = $this->buildMarksGrid($student, $years);
+        $tuitions = $this->buildTuitions($student, $assignments);
+        $rows = $this->attachTuitions($grid['rows'], $tuitions);
+        $config = SchoolPpsConfig::current();
+
+        return [
+            'student' => array_merge(
+                $student->only(['id', 'student_code', 'name', 'photo_path', 'guardian_name', 'guardian_phone']),
+                StudentTaxonomyFilter::present($student),
+            ),
+            'period' => $period,
+            'years' => $years,
+            'available_years' => $grid['available_years'],
+            'snapshot' => $this->serializeSnapshot($snapshot, $previous),
+            'class_average' => $this->classAverage($sectionId, $period),
+            'forecast' => $this->forecast->forecastForStudent($student->id, $period),
+            'why' => $this->buildWhy($student, $snapshot, $rows, $config),
+            'marks_grid' => ['columns' => $grid['columns'], 'rows' => $rows],
+            'signals' => $this->buildSignals($student, $snapshot, $previous, $viewer),
+            'people' => $this->buildPeople($student, $assignments, $viewer),
+            'tuitions' => $tuitions,
+            'timeline' => $this->buildTimeline($student, $period),
+            'notifications' => $this->recentNotifications($student),
+        ];
+    }
+
+    private function serializeSnapshot(?PerformanceSnapshot $snapshot, ?PerformanceSnapshot $previous): ?array
+    {
+        if ($snapshot === null) {
+            return null;
+        }
+
+        return [
+            'period' => $snapshot->snapshot_period,
+            'overall_score' => (float) $snapshot->overall_score,
+            'risk_score' => (float) $snapshot->risk_score,
+            'academic_score' => (float) $snapshot->academic_score,
+            'attendance_score' => (float) $snapshot->attendance_score,
+            'behavior_score' => (float) $snapshot->behavior_score,
+            'participation_score' => (float) $snapshot->participation_score,
+            'extracurricular_score' => (float) $snapshot->extracurricular_score,
+            'alert_level' => $snapshot->alert_level,
+            'trend_direction' => $snapshot->trend_direction,
+            'previous_period' => $previous?->snapshot_period,
+            'overall_delta' => $previous ? round((float) $snapshot->overall_score - (float) $previous->overall_score, 1) : null,
+            'risk_delta' => $previous ? round((float) $snapshot->risk_score - (float) $previous->risk_score, 1) : null,
+        ];
+    }
+
+    private function classAverage(?int $sectionId, string $period): ?float
+    {
+        if ($sectionId === null) {
+            return null;
+        }
+
+        $classmates = Student::query();
+        StudentTaxonomyFilter::applySectionIds($classmates, [$sectionId]);
+
+        $avg = PerformanceSnapshot::query()
+            ->forPeriod($period)
+            ->whereIn('student_id', $classmates->select('students.id'))
+            ->avg('overall_score');
+
+        return $avg === null ? null : round((float) $avg, 1);
+    }
+
+    /**
+     * Max three one-line reasons, most severe first: alert triggers, then the
+     * weakest subject against class average, then attendance.
+     *
+     * @return array<int, array{kind: string, text: string}>
+     */
+    private function buildWhy(Student $student, ?PerformanceSnapshot $snapshot, array $rows, SchoolPpsConfig $config): array
+    {
+        $why = [];
+
+        $alert = PpsAlert::query()->where('student_id', $student->id)->active()->orderByDesc('created_at')->first();
+        foreach (collect($alert?->trigger_reasons ?? [])->take(2) as $reason) {
+            if (! empty($reason['detail'])) {
+                $why[] = ['kind' => 'alert', 'text' => $reason['detail']];
+            }
+        }
+
+        $weakest = collect($rows)->first(fn (array $row) => $row['gap'] !== null && $row['gap'] < 0);
+        if ($weakest !== null) {
+            $trend = $weakest['delta'] === null ? '' : sprintf(' (%s%.1f since previous exam)', $weakest['delta'] > 0 ? '+' : '', $weakest['delta']);
+            $why[] = [
+                'kind' => 'subject',
+                'text' => sprintf('%s %.1f%% vs class average %.1f%%%s.', $weakest['subject'], $weakest['latest_pct'], $weakest['latest_class_avg'], $trend),
+            ];
+        }
+
+        if ($snapshot !== null && (float) $snapshot->attendance_score < (float) $config->threshold_attendance_warning) {
+            $absent = (int) DB::table('pps_attendance')
+                ->where('student_id', $student->id)
+                ->where('date', '>=', now()->subDays(30)->toDateString())
+                ->where('status', 'absent')
+                ->count();
+            $why[] = [
+                'kind' => 'attendance',
+                'text' => sprintf('Attendance score %.0f — %d absences in the last 30 days.', (float) $snapshot->attendance_score, $absent),
+            ];
+        }
+
+        return array_slice(array_values(array_unique($why, SORT_REGULAR)), 0, 3);
+    }
+
+    private function buildSignals(Student $student, ?PerformanceSnapshot $snapshot, ?PerformanceSnapshot $previous, ?User $viewer): array
+    {
+        $scores = [];
+        foreach ([
+            'academic' => 'Academic', 'attendance' => 'Attendance', 'behavior' => 'Behaviour',
+            'participation' => 'Participation', 'extracurricular' => 'Extracurricular',
+        ] as $key => $label) {
+            $column = "{$key}_score";
+            $value = $snapshot ? (float) $snapshot->{$column} : null;
+            $prev = $previous ? (float) $previous->{$column} : null;
+            $scores[] = [
+                'key' => $key,
+                'label' => $label,
+                'value' => $value,
+                'delta' => ($value !== null && $prev !== null) ? round($value - $prev, 1) : null,
+            ];
+        }
+
+        $attendance = DB::table('pps_attendance')
+            ->where('student_id', $student->id)
+            ->where('date', '>=', now()->subDays(30)->toDateString())
+            ->groupBy('status')
+            ->selectRaw('status, COUNT(*) as n')
+            ->pluck('n', 'status');
+
+        $cards = BehaviorCard::query()
+            ->where('student_id', $student->id)
+            ->where('issued_at', '>=', now()->subDays(60))
+            ->groupBy('card_type')
+            ->selectRaw('card_type, COUNT(*) as n')
+            ->pluck('n', 'card_type');
+
+        return [
+            'scores' => $scores,
+            'attendance_30d' => [
+                'present' => (int) ($attendance['present'] ?? 0),
+                'absent' => (int) ($attendance['absent'] ?? 0),
+                'late' => (int) ($attendance['late'] ?? 0),
+            ],
+            'behavior_cards_60d' => [
+                'red' => (int) ($cards['red'] ?? 0),
+                'yellow' => (int) ($cards['yellow'] ?? 0),
+                'green' => (int) ($cards['green'] ?? 0),
+            ],
+            'counseling_sessions' => CounselingSession::query()->where('student_id', $student->id)->count(),
+            'wellbeing' => $this->insights->buildWellbeing($student, $viewer),
+        ];
+    }
+
+    /** @return Collection<int, TeacherAssignment> */
+    private function assignmentsForSection(?int $sectionId): Collection
+    {
+        if ($sectionId === null) {
+            return collect();
+        }
+
+        return TeacherAssignment::query()
+            ->where('section_id', $sectionId)
+            ->with(['teacher:id,full_name,user_id', 'subject:id,full_name'])
+            ->orderBy('id')
+            ->get();
+    }
+
+    private function buildPeople(Student $student, Collection $assignments, ?User $viewer): array
+    {
+        $context = $this->insights->buildContext($student, $viewer);
+        $classTeacher = $assignments->first(fn (TeacherAssignment $a) => $a->is_class_teacher && $a->teacher !== null);
+
+        $subjectTeachers = $assignments
+            ->filter(fn (TeacherAssignment $a) => $a->subject_id !== null && $a->teacher !== null)
+            ->unique('subject_id')
+            ->values()
+            ->map(fn (TeacherAssignment $a) => [
+                'subject_id' => (int) $a->subject_id,
+                'subject' => $a->subject?->full_name,
+                'teacher_id' => (int) $a->teacher_id,
+                'name' => $a->teacher?->full_name,
+                'has_login' => $a->teacher?->user_id !== null,
+            ])
+            ->all();
+
+        $lastSession = CounselingSession::query()
+            ->where('student_id', $student->id)
+            ->with('counselor:id,name')
+            ->orderByDesc('session_date')
+            ->first();
+
+        return [
+            'guardian' => [
+                'name' => $student->guardian_name,
+                'phone' => $student->guardian_phone,
+                'relation' => $context['guardian_relation'] ?? null,
+                'profession' => $context['guardian_profession'] ?? null,
+                'family_status' => $context['family_status'] ?? null,
+                'economic_status' => $context['economic_status'] ?? null,
+                'restricted' => (bool) ($context['restricted'] ?? true),
+            ],
+            'class_teacher' => $classTeacher ? [
+                'teacher_id' => (int) $classTeacher->teacher_id,
+                'name' => $classTeacher->teacher?->full_name,
+                'has_login' => $classTeacher->teacher?->user_id !== null,
+            ] : null,
+            'subject_teachers' => $subjectTeachers,
+            'counselor' => $lastSession?->counselor?->name,
+        ];
+    }
+
+    /**
+     * Recorded rows from pps_private_tuitions plus the legacy JSON on
+     * students.private_tuition_subjects (source = "declared").
+     */
+    private function buildTuitions(Student $student, Collection $assignments): array
+    {
+        $sectionTeacherIds = $assignments->pluck('teacher_id')->map(fn ($id) => (int) $id)->unique()->all();
+
+        $recorded = PrivateTuition::query()
+            ->where('student_id', $student->id)
+            ->with(['teacher:id,full_name', 'subject:id,full_name'])
+            ->orderByDesc('started_on')
+            ->orderByDesc('id')
+            ->get()
+            ->map(fn (PrivateTuition $t) => [
+                'id' => $t->id,
+                'subject_id' => $t->subject_id,
+                'subject' => $t->subject?->full_name ?? $t->subject_name,
+                'teacher_id' => $t->teacher_id,
+                'teacher_name' => $t->teacher?->full_name ?? $t->tutor_name,
+                'is_school_teacher' => $t->teacher_id !== null,
+                'teaches_this_class' => $t->teacher_id !== null && in_array((int) $t->teacher_id, $sectionTeacherIds, true),
+                'hours_per_week' => $t->hours_per_week,
+                'started_on' => $t->started_on?->toDateString(),
+                'ended_on' => $t->ended_on?->toDateString(),
+                'notes' => $t->notes,
+                'source' => 'recorded',
+            ]);
+
+        $declared = collect($student->private_tuition_subjects ?? [])
+            ->map(fn (mixed $entry) => is_string($entry) ? ['subject' => $entry] : $entry)
+            ->filter(fn ($entry) => ! empty($entry['subject']))
+            ->map(fn (array $entry) => [
+                'id' => null,
+                'subject_id' => null,
+                'subject' => $entry['subject'],
+                'teacher_id' => null,
+                'teacher_name' => $entry['tutor_name'] ?? null,
+                'is_school_teacher' => false,
+                'teaches_this_class' => false,
+                'hours_per_week' => $entry['hours_per_week'] ?? null,
+                'started_on' => null,
+                'ended_on' => null,
+                'notes' => $student->private_tuition_notes,
+                'source' => 'declared',
+            ]);
+
+        return $recorded->concat($declared)->values()->all();
+    }
+
+    private function attachTuitions(array $rows, array $tuitions): array
+    {
+        $active = array_filter($tuitions, fn (array $t) => $t['ended_on'] === null);
+
+        foreach ($rows as &$row) {
+            foreach ($active as $tuition) {
+                $matchesId = $tuition['subject_id'] !== null && $tuition['subject_id'] === $row['subject_id'];
+                $matchesName = $tuition['subject_id'] === null && strcasecmp($tuition['subject'], $row['subject']) === 0;
+                if ($matchesId || $matchesName) {
+                    $row['tuition'] = $tuition;
+                    $row['tuition_flag'] = $tuition['is_school_teacher']
+                        && $row['latest_class_avg'] !== null
+                        && $row['latest_pct'] < $row['latest_class_avg'];
+                    break;
+                }
+            }
+        }
+        unset($row);
+
+        return $rows;
+    }
+
+    /** Last six months of events, newest first, capped at 20. */
+    private function buildTimeline(Student $student, string $period): array
+    {
+        $end = Carbon::createFromFormat('Y-m', $period)->endOfMonth();
+        $start = $end->copy()->subMonths(6)->startOfMonth();
+        $events = collect();
+
+        BehaviorCard::query()->where('student_id', $student->id)->whereBetween('issued_at', [$start, $end])->get()
+            ->each(fn (BehaviorCard $c) => $events->push([
+                'type' => 'behavior_card', 'level' => $c->card_type, 'subject' => null,
+                'text' => $c->reason, 'date' => $c->issued_at?->toDateString(),
+            ]));
+
+        ClassroomRating::query()->where('student_id', $student->id)->whereNotNull('free_comment')
+            ->whereBetween('rating_period', [$start->toDateString(), $end->toDateString()])->get()
+            ->each(fn (ClassroomRating $r) => $events->push([
+                'type' => 'teacher_note', 'level' => $r->behavioral_flag, 'subject' => $r->subject,
+                'text' => $r->free_comment, 'date' => $r->rating_period?->toDateString(),
+            ]));
+
+        CounselingSession::query()->where('student_id', $student->id)
+            ->whereBetween('session_date', [$start->toDateString(), $end->toDateString()])->get()
+            ->each(fn (CounselingSession $s) => $events->push([
+                'type' => 'counseling', 'level' => $s->progress_status, 'subject' => null,
+                'text' => $s->session_type === 'psychometric' ? 'Psychometric assessment recorded.' : ($s->action_plan ?: 'Counselling session recorded.'),
+                'date' => $s->session_date?->toDateString(),
+            ]));
+
+        PpsAlert::query()->where('student_id', $student->id)->whereBetween('created_at', [$start, $end])->get()
+            ->each(fn (PpsAlert $a) => $events->push([
+                'type' => 'alert', 'level' => $a->alert_level, 'subject' => null,
+                'text' => collect($a->trigger_reasons)->pluck('detail')->implode(' '),
+                'date' => $a->created_at?->toDateString(),
+            ]));
+
+        WelfareIntervention::query()->where('student_id', $student->id)->whereBetween('created_at', [$start, $end])->get()
+            ->each(fn (WelfareIntervention $w) => $events->push([
+                'type' => 'welfare', 'level' => $w->intervention_type, 'subject' => null,
+                'text' => $w->notes ?: $w->intervention_type, 'date' => $w->created_at?->toDateString(),
+            ]));
+
+        Extracurricular::query()->where('student_id', $student->id)->whereNotNull('achievement')
+            ->whereBetween('event_date', [$start->toDateString(), $end->toDateString()])->get()
+            ->each(fn (Extracurricular $e) => $events->push([
+                'type' => 'achievement', 'level' => 'green', 'subject' => null,
+                'text' => "{$e->activity_name}: {$e->achievement}", 'date' => $e->event_date?->toDateString(),
+            ]));
+
+        return $events->sortByDesc('date')->values()->take(20)->all();
+    }
+
+    private function recentNotifications(Student $student): array
+    {
+        return PpsNotificationLog::query()
+            ->where('student_id', $student->id)
+            ->where('type', self::NOTIFICATION_TYPE)
+            ->orderByDesc('generated_at')
+            ->limit(5)
+            ->get()
+            ->map(fn (PpsNotificationLog $log) => [
+                'id' => $log->id,
+                'recipient_role' => $log->recipient_role,
+                'teacher_name' => $log->meta['teacher_name'] ?? null,
+                'subject' => $log->subject,
+                'generated_at' => $log->generated_at?->toIso8601String(),
+            ])
+            ->all();
+    }
+
     // ── Marks grid ─────────────────────────────────────────────────────────
 
     /**

@@ -2,6 +2,8 @@
 
 namespace Tests\Feature\Pps;
 
+use App\Models\Pps\PerformanceSnapshot;
+use App\Models\Pps\PpsAlert;
 use App\Models\Pps\PrivateTuition;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
@@ -74,5 +76,96 @@ class Student360Test extends TestCase
         $one = $service->buildMarksGrid($student->fresh(), 1);
         $this->assertCount(1, $one['columns']);
         $this->assertSame(2026, $one['columns'][0]['academic_year']);
+    }
+
+    public function test_build_returns_full_payload_with_tuition_flag(): void
+    {
+        $principal = $this->createUser([
+            'name' => 'Principal', 'email' => 'principal@example.test', 'role' => 'principal',
+            'password' => Hash::make('password'),
+        ]);
+        $teacherUser = $this->createUser([
+            'name' => 'Math Teacher', 'email' => 'mt2@example.test', 'role' => 'teacher',
+            'password' => Hash::make('password'),
+        ]);
+        $classTeacherUser = $this->createUser([
+            'name' => 'Class Teacher', 'email' => 'ct@example.test', 'role' => 'teacher',
+            'password' => Hash::make('password'),
+        ]);
+        $student = $this->makeStudent([
+            'student_code' => 'PPS-360-4', 'name' => 'Flag Student',
+            'class_name' => '8', 'section' => 'A', 'roll_number' => 5,
+            'guardian_name' => 'Guardian One', 'guardian_phone' => '+8801000000000',
+            'private_tuition_subjects' => [['subject' => 'English', 'hours_per_week' => 2, 'tutor_name' => 'Outside Sir']],
+        ]);
+        $peer = $this->makeStudent([
+            'student_code' => 'PPS-360-5', 'name' => 'Peer Two',
+            'class_name' => '8', 'section' => 'A', 'roll_number' => 6,
+        ]);
+
+        $this->assignTeacher($teacherUser, '8', 'A', 'Mathematics');
+        $this->assignTeacher($classTeacherUser, '8', 'A', null, true);
+
+        $this->recordExamResult($student, 'Mathematics', '2026-06-15', 35);
+        $this->recordExamResult($peer, 'Mathematics', '2026-06-15', 75);
+
+        PerformanceSnapshot::query()->create([
+            'student_id' => $student->id, 'snapshot_period' => '2026-08',
+            'academic_score' => 60, 'attendance_score' => 70, 'behavior_score' => 60,
+            'participation_score' => 60, 'extracurricular_score' => 60, 'overall_score' => 62,
+            'risk_score' => 30, 'alert_level' => 'watch', 'trend_direction' => 'stable',
+            'snapshot_data' => ['subjects' => [], 'attendance' => []], 'calculated_at' => now(),
+        ]);
+        PerformanceSnapshot::query()->create([
+            'student_id' => $student->id, 'snapshot_period' => '2026-09',
+            'academic_score' => 45, 'attendance_score' => 26, 'behavior_score' => 37,
+            'participation_score' => 35, 'extracurricular_score' => 46, 'overall_score' => 38.6,
+            'risk_score' => 71.8, 'alert_level' => 'urgent', 'trend_direction' => 'rapid_down',
+            'snapshot_data' => ['subjects' => [], 'attendance' => []], 'calculated_at' => now(),
+        ]);
+        PpsAlert::query()->create([
+            'student_id' => $student->id, 'snapshot_period' => '2026-09', 'alert_level' => 'urgent',
+            'trigger_reasons' => [['type' => 'academic_fail_zone', 'detail' => 'Academic score dropped below 40% this period.', 'value' => 45]],
+        ]);
+        PrivateTuition::create([
+            'student_id' => $student->id,
+            'subject_id' => $this->subject('Mathematics')->id,
+            'subject_name' => 'Mathematics',
+            'teacher_id' => $this->makeTeacher($teacherUser)->id,
+            'hours_per_week' => 3,
+        ]);
+
+        $payload = app(\App\Services\Pps\Student360Service::class)
+            ->build($student->fresh(), $principal, '2026-09', 3);
+
+        $this->assertSame('Flag Student', $payload['student']['name']);
+        $this->assertSame('8', $payload['student']['class_name']);
+        $this->assertSame(38.6, $payload['snapshot']['overall_score']);
+        $this->assertSame(-23.4, $payload['snapshot']['overall_delta']);
+        $this->assertSame('2026-08', $payload['snapshot']['previous_period']);
+
+        $this->assertNotEmpty($payload['why']);
+        $this->assertLessThanOrEqual(3, count($payload['why']));
+        $this->assertSame('Academic score dropped below 40% this period.', $payload['why'][0]['text']);
+
+        $mathRow = collect($payload['marks_grid']['rows'])->firstWhere('subject', 'Mathematics');
+        $this->assertNotNull($mathRow['tuition']);
+        $this->assertTrue($mathRow['tuition']['is_school_teacher']);
+        $this->assertTrue($mathRow['tuition']['teaches_this_class']);
+        $this->assertTrue($mathRow['tuition_flag']);
+
+        $this->assertCount(2, $payload['tuitions']);
+        $this->assertSame('declared', collect($payload['tuitions'])->firstWhere('subject', 'English')['source']);
+
+        $this->assertSame('Class Teacher', $payload['people']['class_teacher']['name']);
+        $this->assertSame('Math Teacher', $payload['people']['subject_teachers'][0]['name']);
+        $this->assertSame('Guardian One', $payload['people']['guardian']['name']);
+
+        $this->assertSame('academic', $payload['signals']['scores'][0]['key']);
+        $this->assertSame(-15.0, $payload['signals']['scores'][0]['delta']);
+        $this->assertArrayHasKey('wellbeing', $payload['signals']);
+        $this->assertIsArray($payload['timeline']);
+        $this->assertArrayHasKey('projected_overall', $payload['forecast']);
+        $this->assertSame([], $payload['notifications']);
     }
 }
