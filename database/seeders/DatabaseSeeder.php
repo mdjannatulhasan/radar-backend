@@ -40,6 +40,7 @@ class DatabaseSeeder extends Seeder
             PpsExamSeeder::class,
             PpsTeacherAssignmentSeeder::class,
             PpsDemoSeeder::class,
+            PpsHistoryDemoSeeder::class,
         ]);
     }
 }
