@@ -236,4 +236,56 @@ class Student360Test extends TestCase
             ->postJson("/api/v1/pps/students/{$student->id}/notify-teachers", ['subject_ids' => [$mathId]])
             ->assertForbidden();
     }
+
+    public function test_counselor_can_record_tuition_and_principal_cannot(): void
+    {
+        $counselor = $this->createUser([
+            'name' => 'Counselor', 'email' => 'counselor@example.test', 'role' => 'counselor',
+            'password' => Hash::make('password'),
+        ]);
+        $principal = $this->createUser([
+            'name' => 'Principal', 'email' => 'principal3@example.test', 'role' => 'principal',
+            'password' => Hash::make('password'),
+        ]);
+        $teacherUser = $this->createUser([
+            'name' => 'Math Teacher', 'email' => 'mt4@example.test', 'role' => 'teacher',
+            'password' => Hash::make('password'),
+        ]);
+        $student = $this->makeStudent([
+            'student_code' => 'PPS-360-7', 'name' => 'Tuition Student',
+            'class_name' => '8', 'section' => 'A', 'roll_number' => 3,
+        ]);
+        $teacher = $this->makeTeacher($teacherUser);
+
+        $this->signInPps($principal)
+            ->postJson("/api/v1/pps/students/{$student->id}/tuitions", ['subject_name' => 'Mathematics', 'tutor_name' => 'X'])
+            ->assertForbidden();
+
+        $this->signInPps($counselor)
+            ->postJson("/api/v1/pps/students/{$student->id}/tuitions", ['subject_name' => 'Mathematics'])
+            ->assertStatus(422);
+
+        $created = $this->signInPps($counselor)
+            ->postJson("/api/v1/pps/students/{$student->id}/tuitions", [
+                'subject_name' => 'Mathematics',
+                'subject_id' => $this->subject('Mathematics')->id,
+                'teacher_id' => $teacher->id,
+                'hours_per_week' => 3,
+                'started_on' => '2026-03-01',
+            ])
+            ->assertCreated()
+            ->json('tuition.id');
+
+        $this->signInPps($principal)
+            ->getJson("/api/v1/pps/students/{$student->id}/360")
+            ->assertOk()
+            ->assertJsonPath('tuitions.0.teacher_name', 'Math Teacher')
+            ->assertJsonPath('tuitions.0.is_school_teacher', true);
+
+        $this->signInPps($counselor)
+            ->deleteJson("/api/v1/pps/students/{$student->id}/tuitions/{$created}")
+            ->assertOk();
+
+        $this->assertDatabaseMissing('pps_private_tuitions', ['id' => $created]);
+    }
 }
