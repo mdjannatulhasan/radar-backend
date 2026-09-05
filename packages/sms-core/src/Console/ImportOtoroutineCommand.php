@@ -16,6 +16,7 @@ use SmsCore\Models\Section;
 use SmsCore\Models\SectionName;
 use SmsCore\Models\Subject;
 use SmsCore\Models\Teacher;
+use SmsCore\Models\TeacherLevelScope;
 use SmsCore\Models\User;
 use SmsCore\Models\Version;
 
@@ -83,6 +84,7 @@ class ImportOtoroutineCommand extends Command
             $this->importUsers();
             $this->importDesignations();
             $this->importTeachers();
+            $this->importTeacherScopes();
             $this->importSections();
             $this->importSubjects();
             $this->importAcademicYears();
@@ -98,6 +100,7 @@ class ImportOtoroutineCommand extends Command
             ['sections', Section::count()],
             ['designations', Designation::count()],
             ['teachers', Teacher::count()],
+            ['teacher_scopes', TeacherLevelScope::count()],
             ['subjects', Subject::count()],
             ['users', User::count()],
             ['academic_years', AcademicYear::count()],
@@ -336,6 +339,50 @@ class ImportOtoroutineCommand extends Command
         }
 
         $this->line('teachers imported: '.count($this->map['teachers'] ?? []));
+    }
+
+    /**
+     * Source teacher_scopes carries no school_id, so it is scoped through the
+     * teachers already imported for this school. Replaces the teacher's set
+     * wholesale so a scope removed at the source disappears here too.
+     */
+    private function importTeacherScopes(): void
+    {
+        $teacherMap = $this->map['teachers'] ?? [];
+        if ($teacherMap === []) {
+            $this->line('teacher_scopes imported: 0');
+
+            return;
+        }
+
+        $rows = DB::connection($this->conn)
+            ->table('teacher_scopes')
+            ->whereIn('teacher_id', array_keys($teacherMap))
+            ->orderBy('id')
+            ->get();
+
+        $seen = [];
+        foreach ($rows as $row) {
+            $teacherId = $teacherMap[$row->teacher_id] ?? null;
+            $versionId = $this->map['versions'][$row->version_id] ?? null;
+            $levelId = $this->map['levels'][$row->level_id] ?? null;
+            if ($teacherId === null || $versionId === null || $levelId === null) {
+                continue;
+            }
+
+            $scope = TeacherLevelScope::updateOrCreate(
+                ['teacher_id' => $teacherId, 'version_id' => $versionId, 'level_id' => $levelId],
+                ['school_id' => $this->school->id],
+            );
+            $seen[] = $scope->id;
+        }
+
+        TeacherLevelScope::query()
+            ->whereIn('teacher_id', array_values($teacherMap))
+            ->whereNotIn('id', $seen)
+            ->delete();
+
+        $this->line('teacher_scopes imported: '.count($seen));
     }
 
     private function importSections(): void

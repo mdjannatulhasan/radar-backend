@@ -6,6 +6,7 @@ namespace SmsCore\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use SmsCore\Concerns\BelongsToSchool;
 
 class Teacher extends Model
@@ -31,5 +32,11 @@ class Teacher extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    /** Version/level pairs this teacher is responsible for. Empty = unscoped. */
+    public function levelScopes(): HasMany
+    {
+        return $this->hasMany(TeacherLevelScope::class);
     }
 }

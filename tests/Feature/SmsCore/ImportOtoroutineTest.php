@@ -59,6 +59,7 @@ class ImportOtoroutineTest extends TestCase
         $src->statement('CREATE TABLE sections (id bigint primary key, school_id bigint, class_level_id bigint, section_name_id bigint, name text, class_teacher_id bigint)');
         $src->statement('CREATE TABLE designations (id bigint primary key, school_id bigint, title text, rank int)');
         $src->statement('CREATE TABLE teachers (id bigint primary key, school_id bigint, full_name text, short_code text, designation_id bigint, contact_phone text, contact_email text, education text, max_weekly_periods int, is_active boolean, user_id bigint)');
+        $src->statement('CREATE TABLE teacher_scopes (id bigint primary key, teacher_id bigint, version_id bigint, level_id bigint)');
         $src->statement('CREATE TABLE subjects (id bigint primary key, school_id bigint, level_id bigint, version_id bigint, full_name text, short_name text, default_periods numeric, is_optional boolean, counts_as_class boolean)');
         $src->statement('CREATE TABLE academic_years (id bigint primary key, school_id bigint, name text, start_date date, end_date date, is_current boolean)');
         $src->statement('CREATE TABLE users (id bigint primary key, school_id bigint, name text, email text, phone text, role text, password text, is_active boolean)');
@@ -98,6 +99,7 @@ class ImportOtoroutineTest extends TestCase
             ['id' => 901, 'school_id' => 1, 'name' => 'Md. Akkas Ali Sarker', 'email' => 'akkas@gmail.Com', 'phone' => null, 'role' => 'school_admin', 'password' => bcrypt('secret'), 'is_active' => true],
         ]);
         $src->table('teachers')->insert(['id' => 500, 'school_id' => 1, 'full_name' => 'Md. Zillur Rahman', 'short_code' => 'ZR', 'designation_id' => 3, 'contact_phone' => '01517837838', 'contact_email' => null, 'education' => null, 'max_weekly_periods' => 24, 'is_active' => true, 'user_id' => 900]);
+        $src->table('teacher_scopes')->insert(['id' => 1, 'teacher_id' => 500, 'version_id' => 1, 'level_id' => 1]);
         $src->table('subjects')->insert(['id' => 700, 'school_id' => 1, 'level_id' => 1, 'version_id' => 1, 'full_name' => 'Bangla 1st Paper', 'short_name' => 'B1', 'default_periods' => 1, 'is_optional' => false, 'counts_as_class' => true]);
         $src->table('academic_years')->insert(['id' => 1, 'school_id' => 1, 'name' => '2026', 'start_date' => '2026-01-01', 'end_date' => '2026-12-31', 'is_current' => true]);
     }
@@ -237,6 +239,23 @@ class ImportOtoroutineTest extends TestCase
         $this->assertSame(2, ClassLevel::count());
         $this->assertSame(1, Teacher::count());
         $this->assertSame(1, School::count());
+    }
+
+    public function test_teacher_scopes_are_imported_and_mapped(): void
+    {
+        $this->artisan('sms:import:otoroutine', ['--source-school' => 1, '--connection' => 'otoroutine'])
+            ->assertSuccessful();
+
+        $teacher = \SmsCore\Models\Teacher::query()->where('short_code', 'ZR')->firstOrFail();
+        $scopes = $teacher->levelScopes()->get();
+
+        $this->assertCount(1, $scopes);
+        $this->assertSame(\SmsCore\Models\Version::query()->where('name', 'Bangla')->value('id'), $scopes[0]->version_id);
+        $this->assertSame(\SmsCore\Models\Level::query()->where('name', 'School')->value('id'), $scopes[0]->level_id);
+
+        // Re-import is idempotent.
+        $this->artisan('sms:import:otoroutine', ['--source-school' => 1, '--connection' => 'otoroutine'])->assertSuccessful();
+        $this->assertSame(1, \SmsCore\Models\TeacherLevelScope::count());
     }
 
     /**
