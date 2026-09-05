@@ -148,4 +148,47 @@ class EarlyWarningTest extends TestCase
         app(EarlyWarningService::class)->generate('2026-09');
         $this->assertSame($logs->count(), PpsNotificationLog::query()->where('student_id', $student->id)->count());
     }
+
+    public function test_endpoints_list_scope_acknowledge_and_run(): void
+    {
+        $principal = $this->createUser(['name' => 'Principal', 'email' => 'p2@ew.test', 'role' => 'principal', 'password' => Hash::make('x')]);
+        $teacherA = $this->createUser(['name' => 'Teacher A', 'email' => 'ta@ew.test', 'role' => 'teacher', 'password' => Hash::make('x')]);
+        $teacherB = $this->createUser(['name' => 'Teacher B', 'email' => 'tb@ew.test', 'role' => 'teacher', 'password' => Hash::make('x')]);
+        $s1 = $this->makeStudent(['student_code' => 'EW-8', 'name' => 'Sec A Student', 'class_name' => '8', 'section' => 'A']);
+        $s2 = $this->makeStudent(['student_code' => 'EW-9', 'name' => 'Sec B Student', 'class_name' => '8', 'section' => 'B']);
+        $this->assignTeacher($teacherA, '8', 'A', 'Mathematics');
+        $this->assignTeacher($teacherB, '8', 'B', 'Mathematics');
+        $this->seedRiskSeries($s1->id, [10, 20, 30]);
+        $this->seedRiskSeries($s2->id, [5, 15, 25]);
+
+        // Run through the notifications endpoint (principal only).
+        $this->signInPps($teacherA)->postJson('/api/v1/pps/notifications/run/early-warnings', ['period' => '2026-09'])->assertForbidden();
+        $this->signInPps($principal)->postJson('/api/v1/pps/notifications/run/early-warnings', ['period' => '2026-09'])
+            ->assertOk()->assertJsonPath('created', 2);
+
+        $this->signInPps($principal)->getJson('/api/v1/pps/early-warnings')
+            ->assertOk()->assertJsonCount(2, 'data')
+            ->assertJsonPath('data.0.category', 'imminent')
+            ->assertJsonPath('data.0.student.name', 'Sec A Student')
+            ->assertJsonPath('data.0.recipients.0.role', 'subject_teacher');
+
+        $this->signInPps($principal)->getJson('/api/v1/pps/early-warnings?category=near')->assertOk()->assertJsonCount(1, 'data');
+
+        // Teacher sees only their own section.
+        $this->signInPps($teacherA)->getJson('/api/v1/pps/early-warnings')->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.student.name', 'Sec A Student');
+
+        $id = EarlyWarning::query()->where('student_id', $s1->id)->value('id');
+        // Teachers may acknowledge only their own students: B is not assigned to section A.
+        $this->signInPps($teacherB)->patchJson("/api/v1/pps/early-warnings/{$id}/acknowledge", ['note' => 'Extra class arranged'])->assertForbidden();
+        $this->signInPps($principal)->patchJson("/api/v1/pps/early-warnings/{$id}/acknowledge", ['note' => 'Extra class arranged'])
+            ->assertOk()->assertJsonPath('warning.status', 'acknowledged');
+        $this->assertSame('Extra class arranged', EarlyWarning::find($id)->acknowledgement_note);
+
+        // Student 360 exposes the open warning.
+        $this->signInPps($principal)->getJson("/api/v1/pps/students/{$s1->id}/360")
+            ->assertOk()->assertJsonPath('early_warning.category', 'imminent')->assertJsonPath('early_warning.status', 'acknowledged');
+
+        // Artisan command works too.
+        $this->artisan('pps:early-warnings', ['period' => '2026-09'])->assertSuccessful();
+    }
 }

@@ -5,6 +5,7 @@ namespace App\Services\Pps;
 use App\Models\Pps\BehaviorCard;
 use App\Models\Pps\ClassroomRating;
 use App\Models\Pps\CounselingSession;
+use App\Models\Pps\EarlyWarning;
 use App\Models\Pps\Extracurricular;
 use App\Models\Pps\PerformanceSnapshot;
 use App\Models\Pps\PpsAlert;
@@ -67,6 +68,7 @@ class Student360Service
             'snapshot' => $this->serializeSnapshot($snapshot, $previous),
             'class_average' => $this->classAverage($sectionId, $period),
             'forecast' => $this->forecast->forecastForStudent($student->id, $period),
+            'horizons' => $this->horizons($student, $period),
             'why' => $this->buildWhy($student, $snapshot, $rows, $config),
             'marks_grid' => ['columns' => $grid['columns'], 'rows' => $rows],
             'signals' => $this->buildSignals($student, $snapshot, $previous, $viewer),
@@ -74,6 +76,40 @@ class Student360Service
             'tuitions' => $tuitions,
             'timeline' => $this->buildTimeline($student, $period),
             'notifications' => $this->recentNotifications($student),
+            'early_warning' => $this->latestEarlyWarning($student),
+        ];
+    }
+
+    /** @return array<int, array{months: int, projected_risk: float|null, projected_overall: float|null}> */
+    private function horizons(Student $student, string $period): array
+    {
+        $history = PerformanceSnapshot::query()
+            ->where('student_id', $student->id)->where('snapshot_period', '<=', $period)
+            ->orderBy('snapshot_period')->get(['risk_score', 'overall_score'])->slice(-6);
+        $risks = $history->pluck('risk_score')->map(fn ($v) => (float) $v)->all();
+        $overall = $history->pluck('overall_score')->map(fn ($v) => (float) $v)->all();
+
+        return array_map(fn (int $m) => [
+            'months' => $m,
+            'projected_risk' => count($risks) >= 2 ? round($this->forecast->projectAhead($risks, $m), 1) : null,
+            'projected_overall' => count($overall) >= 2 ? round($this->forecast->projectAhead($overall, $m), 1) : null,
+        ], EarlyWarningService::HORIZONS);
+    }
+
+    private function latestEarlyWarning(Student $student): ?array
+    {
+        $w = EarlyWarning::query()->where('student_id', $student->id)->open()->orderByDesc('snapshot_period')->first();
+
+        return $w === null ? null : [
+            'id' => $w->id,
+            'category' => $w->category,
+            'horizon_months' => $w->horizon_months,
+            'current_risk' => $w->current_risk,
+            'projected_risk' => $w->projected_risk,
+            'projected_overall' => $w->projected_overall,
+            'drivers' => $w->drivers ?? [],
+            'status' => $w->status,
+            'snapshot_period' => $w->snapshot_period,
         ];
     }
 

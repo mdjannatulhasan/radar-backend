@@ -14,6 +14,7 @@ use App\Http\Controllers\Api\V1\Pps\BehaviorController;
 use App\Http\Controllers\Api\V1\Pps\ClassroomRatingController;
 use App\Http\Controllers\Api\V1\Pps\CounselingController;
 use App\Http\Controllers\Api\V1\Pps\DashboardController;
+use App\Http\Controllers\Api\V1\Pps\EarlyWarningController;
 use App\Http\Controllers\Api\V1\Pps\ExtracurricularController;
 use App\Http\Controllers\Api\V1\Pps\NoticeController;
 use App\Http\Controllers\Api\V1\Pps\NotificationController;
@@ -81,6 +82,10 @@ Route::prefix('v1/pps')
     Route::get('/alerts', [AlertController::class, 'index'])
         ->middleware('pps.can:alerts.view');
     Route::patch('/alerts/{alert}/resolve', [DashboardController::class, 'resolve'])
+        ->middleware('pps.can:alerts.resolve');
+    Route::get('/early-warnings', [EarlyWarningController::class, 'index'])
+        ->middleware('pps.can:alerts.view');
+    Route::patch('/early-warnings/{warning}/acknowledge', [EarlyWarningController::class, 'acknowledge'])
         ->middleware('pps.can:alerts.resolve');
 
     Route::get('/students/search', [StudentPerformanceController::class, 'quickSearch'])
