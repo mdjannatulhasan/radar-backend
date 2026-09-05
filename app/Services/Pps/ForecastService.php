@@ -71,32 +71,45 @@ class ForecastService
 
     public function project(array $values): float
     {
+        return $this->projectAhead($values, 1);
+    }
+
+    /** Linear-trend projection $steps periods past the last value, clamped to 0..100. */
+    public function projectAhead(array $values, int $steps): float
+    {
         $count = count($values);
         if ($count === 0) {
             return 0.0;
         }
-
         if ($count === 1) {
             return (float) $values[0];
         }
 
-        $xMean = (array_sum(range(1, $count)) / $count);
-        $yMean = (array_sum($values) / $count);
+        [$slope, $intercept] = $this->fit($values);
+        $x = $count + max(1, $steps);
 
+        return max(0.0, min(100.0, $intercept + ($slope * $x)));
+    }
+
+    /** Least-squares slope and intercept over x = 1..n. @return array{0: float, 1: float} */
+    public function fit(array $values): array
+    {
+        $count = count($values);
+        if ($count < 2) {
+            return [0.0, (float) ($values[0] ?? 0)];
+        }
+        $xMean = array_sum(range(1, $count)) / $count;
+        $yMean = array_sum($values) / $count;
         $numerator = 0.0;
         $denominator = 0.0;
-
-        foreach ($values as $index => $value) {
+        foreach (array_values($values) as $index => $value) {
             $x = $index + 1;
             $numerator += ($x - $xMean) * ($value - $yMean);
             $denominator += ($x - $xMean) ** 2;
         }
-
         $slope = $denominator > 0 ? $numerator / $denominator : 0.0;
-        $intercept = $yMean - ($slope * $xMean);
-        $nextX = $count + 1;
 
-        return max(0.0, min(100.0, $intercept + ($slope * $nextX)));
+        return [$slope, $yMean - ($slope * $xMean)];
     }
 
     private function summaryFor(string $direction, float $overall, float $risk): string
