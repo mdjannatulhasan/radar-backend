@@ -4,10 +4,13 @@ namespace Tests\Feature\Pps;
 
 use App\Models\Pps\EarlyWarning;
 use App\Models\Pps\PerformanceSnapshot;
+use App\Models\Pps\PpsNotificationLog;
 use App\Models\Pps\SchoolPpsConfig;
 use App\Services\Pps\EarlyWarningService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
+use SmsCore\Models\Designation;
+use SmsCore\Models\TeacherLevelScope;
 use Tests\TestCase;
 
 class EarlyWarningTest extends TestCase
@@ -95,5 +98,54 @@ class EarlyWarningTest extends TestCase
         $second = app(EarlyWarningService::class)->generate('2026-10');
         $this->assertSame('cleared', $nearRow->fresh()->status);
         $this->assertGreaterThanOrEqual(1, $second['cleared']);
+    }
+
+    public function test_notifications_go_to_class_teacher_subject_teacher_scoped_vp_and_not_other_vp(): void
+    {
+        $classUser = $this->createUser(['name' => 'Class Teacher', 'email' => 'ct@ew.test', 'role' => 'teacher', 'password' => Hash::make('x')]);
+        $mathUser = $this->createUser(['name' => 'Math Teacher', 'email' => 'mt@ew.test', 'role' => 'teacher', 'password' => Hash::make('x')]);
+        $englishUser = $this->createUser(['name' => 'English Teacher', 'email' => 'et@ew.test', 'role' => 'teacher', 'password' => Hash::make('x')]);
+        $vpInUser = $this->createUser(['name' => 'VP Bangla School', 'email' => 'vp1@ew.test', 'role' => 'teacher', 'password' => Hash::make('x')]);
+        $vpOutUser = $this->createUser(['name' => 'VP English College', 'email' => 'vp2@ew.test', 'role' => 'teacher', 'password' => Hash::make('x')]);
+        $vpAllUser = $this->createUser(['name' => 'VP Unscoped', 'email' => 'vp3@ew.test', 'role' => 'teacher', 'password' => Hash::make('x')]);
+        $principal = $this->createUser(['name' => 'Principal', 'email' => 'p@ew.test', 'role' => 'principal', 'password' => Hash::make('x')]);
+
+        $student = $this->makeStudent(['student_code' => 'EW-7', 'name' => 'Notify Student', 'class_name' => '8', 'section' => 'A']);
+        $this->assignTeacher($classUser, '8', 'A', null, true);
+        $this->assignTeacher($mathUser, '8', 'A', 'Mathematics');
+        $this->assignTeacher($englishUser, '8', 'A', 'English');
+
+        $vpDesignation = Designation::create(['school_id' => $this->school()->id, 'title' => 'VP (School)', 'rank' => 1]);
+        $section = $this->section('8', 'A'); // Bangla / School by fixture default
+        $classLevel = $section->classLevel;
+        foreach ([$vpInUser, $vpOutUser, $vpAllUser] as $u) {
+            $this->makeTeacher($u)->update(['designation_id' => $vpDesignation->id]);
+        }
+        TeacherLevelScope::create(['school_id' => $this->school()->id, 'teacher_id' => $this->makeTeacher($vpInUser)->id, 'version_id' => $classLevel->version_id, 'level_id' => $classLevel->level_id]);
+        $otherVersion = \SmsCore\Models\Version::firstOrCreate(['school_id' => $this->school()->id, 'name' => 'English'], ['sort_order' => 9]);
+        $otherLevel = \SmsCore\Models\Level::firstOrCreate(['school_id' => $this->school()->id, 'name' => 'College'], ['sort_order' => 9]);
+        TeacherLevelScope::create(['school_id' => $this->school()->id, 'teacher_id' => $this->makeTeacher($vpOutUser)->id, 'version_id' => $otherVersion->id, 'level_id' => $otherLevel->id]);
+
+        $this->seedRiskSeries($student->id, [10, 20, 30]); // imminent, Mathematics driver
+
+        $result = app(EarlyWarningService::class)->generate('2026-09');
+        $this->assertSame(1, $result['created']);
+
+        $logs = PpsNotificationLog::query()->where('student_id', $student->id)->where('type', 'early_warning_imminent')->get();
+        $byUser = $logs->keyBy('recipient_user_id');
+
+        $this->assertSame('class_teacher', $byUser[$classUser->id]->recipient_role);
+        $this->assertSame('subject_teacher', $byUser[$mathUser->id]->recipient_role);
+        $this->assertArrayNotHasKey($englishUser->id, $byUser->all(), 'English is not a driver');
+        $this->assertSame('vice_principal', $byUser[$vpInUser->id]->recipient_role);
+        $this->assertSame('vice_principal', $byUser[$vpAllUser->id]->recipient_role);
+        $this->assertArrayNotHasKey($vpOutUser->id, $byUser->all(), 'VP scoped to another version/level');
+        $this->assertSame('principal', $byUser[$principal->id]->recipient_role);
+        $this->assertStringContainsString('Mathematics', $byUser[$mathUser->id]->body);
+        $this->assertSame(1, (int) $byUser[$classUser->id]->meta['horizon_months']);
+
+        // Second run in the same period does not duplicate.
+        app(EarlyWarningService::class)->generate('2026-09');
+        $this->assertSame($logs->count(), PpsNotificationLog::query()->where('student_id', $student->id)->count());
     }
 }

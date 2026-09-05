@@ -178,12 +178,149 @@ class EarlyWarningService
         return $drivers;
     }
 
-    // notify(), recipients and query helpers are added in Task 4.
-    /** @return array<int, array> */
+    /**
+     * @return array<int, array{user_id: int|null, role: string, name: string|null}>
+     */
     public function notify(EarlyWarning $warning): array
     {
+        $student = Student::query()->with('currentEnrollment.section.classLevel')->find($warning->student_id);
+        if ($student === null) {
+            return [];
+        }
+
+        $classLevel = $student->currentEnrollment?->section?->classLevel;
+        $sectionId = $student->section_id;
+        $subjectDrivers = collect($warning->drivers ?? [])->where('kind', 'subject')->pluck('key')->map(fn ($s) => mb_strtolower((string) $s))->all();
+
+        $recipients = [];
+        $assignments = $sectionId === null ? collect() : TeacherAssignment::query()
+            ->where('section_id', $sectionId)
+            ->with(['teacher:id,full_name,user_id', 'subject:id,full_name'])
+            ->get();
+
+        foreach ($assignments as $assignment) {
+            if ($assignment->teacher === null) {
+                continue;
+            }
+            if ($assignment->is_class_teacher) {
+                $recipients[] = ['teacher' => $assignment->teacher, 'role' => 'class_teacher', 'subject' => null];
+            }
+            $subjectName = mb_strtolower((string) ($assignment->subject?->full_name ?? ''));
+            if ($assignment->subject_id !== null && $subjectName !== '' && $this->subjectMatches($subjectName, $subjectDrivers)) {
+                $recipients[] = ['teacher' => $assignment->teacher, 'role' => 'subject_teacher', 'subject' => $assignment->subject->full_name];
+            }
+        }
+
+        foreach ($this->vicePrincipalsFor($classLevel?->version_id, $classLevel?->level_id) as $vp) {
+            $recipients[] = ['teacher' => $vp, 'role' => 'vice_principal', 'subject' => null];
+        }
+
+        $sent = [];
+        $seenUsers = [];
+        foreach ($recipients as $r) {
+            /** @var Teacher $teacher */
+            $teacher = $r['teacher'];
+            $key = $teacher->user_id ?? ('t'.$teacher->id.$r['role']);
+            if (isset($seenUsers[$key]) && $r['role'] !== 'subject_teacher') {
+                continue; // same person already reached in a stronger role
+            }
+            $seenUsers[$key] = true;
+            if ($this->writeLog($warning, $student, $r['role'], $teacher->user_id, $teacher->full_name, $r['subject'])) {
+                $sent[] = ['user_id' => $teacher->user_id, 'role' => $r['role'], 'name' => $teacher->full_name];
+            }
+        }
+
+        if ($warning->category === 'imminent') {
+            foreach (User::query()->where('role', 'principal')->get() as $principal) {
+                if ($this->writeLog($warning, $student, 'principal', $principal->id, $principal->name, null)) {
+                    $sent[] = ['user_id' => $principal->id, 'role' => 'principal', 'name' => $principal->name];
+                }
+            }
+        }
+
         $warning->forceFill(['notified_at' => now()])->save();
 
-        return [];
+        return $sent;
+    }
+
+    private function subjectMatches(string $assignedSubject, array $drivers): bool
+    {
+        foreach ($drivers as $driver) {
+            if ($driver === $assignedSubject || str_contains($assignedSubject, $driver) || str_contains($driver, $assignedSubject)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Active teachers on a VP designation whose scope covers (version, level),
+     * or who have no scope rows at all (unscoped = whole school).
+     *
+     * @return Collection<int, Teacher>
+     */
+    public function vicePrincipalsFor(?int $versionId, ?int $levelId): Collection
+    {
+        return Teacher::query()
+            ->where('is_active', true)
+            ->whereHas('designation', fn ($q) => $q->where('title', 'like', 'VP%')->orWhere('title', 'like', 'Vice Principal%'))
+            ->where(function ($q) use ($versionId, $levelId): void {
+                $q->whereDoesntHave('levelScopes');
+                if ($versionId !== null && $levelId !== null) {
+                    $q->orWhereHas('levelScopes', fn ($s) => $s->where('version_id', $versionId)->where('level_id', $levelId));
+                }
+            })
+            ->orderBy('id')
+            ->get();
+    }
+
+    private function writeLog(EarlyWarning $warning, Student $student, string $role, ?int $userId, ?string $name, ?string $subject): bool
+    {
+        $type = 'early_warning_'.$warning->category;
+        $exists = PpsNotificationLog::query()
+            ->where('type', $type)
+            ->where('recipient_role', $role)
+            ->where('recipient_user_id', $userId)
+            ->where('student_id', $student->id)
+            ->where('snapshot_period', $warning->snapshot_period)
+            ->exists();
+        if ($exists) {
+            return false;
+        }
+
+        $taxonomy = StudentTaxonomyFilter::present($student);
+        $classLabel = trim(($taxonomy['class_name'] ?? '').' '.($taxonomy['section_name'] ?? ''));
+        $drivers = collect($warning->drivers ?? []);
+        $driverText = $drivers->map(fn (array $d) => sprintf('%s %s (%s%.1f/month)', ucfirst($d['key']), $d['kind'] === 'subject' ? 'marks' : 'score', $d['slope'] > 0 ? '+' : '', $d['slope']))->implode(', ');
+        $horizonText = match ($warning->horizon_months) { 1 => 'within a month', 3 => 'within 3 months', default => 'within 6 months' };
+
+        PpsNotificationLog::query()->create([
+            'type' => $type,
+            'channel' => 'database',
+            'recipient_role' => $role,
+            'recipient_user_id' => $userId,
+            'student_id' => $student->id,
+            'snapshot_period' => $warning->snapshot_period,
+            'subject' => mb_substr(sprintf('Early warning (%s): %s, %s%s', $warning->category, $student->name, $classLabel, $subject ? ' — '.$subject : ''), 0, 180),
+            'body' => sprintf(
+                "%s is predicted to reach risk %.0f %s (now %.0f). Drivers: %s. Please review and plan support%s.",
+                $student->name, $warning->projected_risk, $horizonText, $warning->current_risk,
+                $driverText === '' ? 'general decline' : $driverText,
+                $subject ? " in {$subject}" : '',
+            ),
+            'meta' => [
+                'source' => 'early_warning',
+                'early_warning_id' => $warning->id,
+                'horizon_months' => $warning->horizon_months,
+                'category' => $warning->category,
+                'drivers' => $warning->drivers,
+                'teacher_name' => $name,
+                'subject' => $subject,
+            ],
+            'generated_at' => now(),
+        ]);
+
+        return true;
     }
 }
