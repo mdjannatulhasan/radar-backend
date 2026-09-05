@@ -34,6 +34,8 @@ class SchoolPpsConfig extends Model
             'notify_guardian_email_on_urgent' => 'boolean',
             'heatmap_score_critical' => 'float',
             'heatmap_score_attention' => 'float',
+            'early_warning_risk_threshold' => 'float',
+            'early_warning_min_history' => 'integer',
         ];
     }
 
@@ -66,6 +68,8 @@ class SchoolPpsConfig extends Model
             'notify_guardian_email_on_urgent' => config('pps.notifications.notify_guardian_email_on_urgent'),
             'heatmap_score_critical' => config('pps.thresholds.heatmap_score_critical'),
             'heatmap_score_attention' => config('pps.thresholds.heatmap_score_attention'),
+            'early_warning_risk_threshold' => config('pps.thresholds.early_warning_risk'),
+            'early_warning_min_history' => config('pps.thresholds.early_warning_min_history'),
         ];
     }
 }
