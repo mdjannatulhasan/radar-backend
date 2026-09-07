@@ -15,6 +15,6 @@ class RolePermission extends Model
 
     public function updatedBy(): BelongsTo
     {
-        return $this->belongsTo(\App\Models\User::class, 'updated_by');
+        return $this->belongsTo(\SmsCore\Models\User::class, 'updated_by');
     }
 }

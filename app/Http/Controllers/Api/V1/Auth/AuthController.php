@@ -4,9 +4,10 @@ namespace App\Http\Controllers\Api\V1\Auth;
 
 use App\Http\Controllers\Controller;
 use App\Models\Pps\TeacherAssignment;
-use App\Models\User;
+use SmsCore\Models\User;
 use App\Support\ModuleCapabilities;
 use App\Support\PpsPermissions;
+use App\Support\TeacherScope;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -79,17 +80,39 @@ class AuthController extends Controller
         $teacherScope = null;
 
         if ($user->hasAnyRole('teacher')) {
-            $teacherScope = $user->teacherAssignments()
-                ->get(['class_name', 'section', 'subject', 'is_class_teacher'])
-                ->groupBy(fn (TeacherAssignment $assignment) => "{$assignment->class_name}-{$assignment->section}")
+            $assignments = TeacherScope::assignments($user);
+
+            if ($assignments->isNotEmpty()) {
+                // class / section / subject are no longer columns on the
+                // assignment: each one now names a concrete section. Load the
+                // whole chain up front so the map below is a pure in-memory
+                // walk rather than three queries per assignment.
+                $assignments->load([
+                    'section.classLevel:id,name',
+                    'section.sectionName:id,name',
+                    'subject:id,full_name',
+                ]);
+            }
+
+            $teacherScope = $assignments
+                ->groupBy(fn (TeacherAssignment $assignment) => sprintf(
+                    '%s-%s',
+                    $assignment->section?->classLevel?->name,
+                    $assignment->section?->sectionName?->name,
+                ))
                 ->map(function ($assignments) {
                     /** @var \Illuminate\Support\Collection<int, TeacherAssignment> $assignments */
                     $first = $assignments->first();
 
                     return [
-                        'class_name' => $first?->class_name,
-                        'section' => $first?->section,
-                        'subjects' => $assignments->pluck('subject')->filter()->unique()->values()->all(),
+                        'class_name' => $first?->section?->classLevel?->name,
+                        'section' => $first?->section?->sectionName?->name,
+                        'subjects' => $assignments
+                            ->map(fn (TeacherAssignment $assignment) => $assignment->subject?->full_name)
+                            ->filter()
+                            ->unique()
+                            ->values()
+                            ->all(),
                         'is_class_teacher' => (bool) $assignments->contains(fn (TeacherAssignment $assignment) => $assignment->is_class_teacher),
                     ];
                 })

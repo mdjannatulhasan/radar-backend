@@ -2,8 +2,8 @@
 
 namespace App\Models\Pps;
 
-use App\Models\Student;
-use App\Models\User;
+use SmsCore\Models\Student;
+use SmsCore\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;

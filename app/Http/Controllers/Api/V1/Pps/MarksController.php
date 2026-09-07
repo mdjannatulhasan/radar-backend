@@ -5,12 +5,15 @@ use App\Http\Controllers\Controller;
 use App\Models\Pps\Exam;
 use App\Models\Pps\ExamClassMap;
 use App\Models\Pps\Mark;
-use App\Models\Student;
 use App\Services\Pps\ComputedScoreService;
+use App\Support\StudentTaxonomyFilter;
+use App\Support\TeacherScope;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
+use SmsCore\Models\Section;
+use SmsCore\Models\Student;
 use Symfony\Component\HttpFoundation\Response;
 
 class MarksController extends Controller
@@ -18,21 +21,32 @@ class MarksController extends Controller
     public function __construct(private readonly ComputedScoreService $scorer) {}
 
     /**
-     * GET /marks?exam_id=&subject_id=
+     * GET /marks?exam_id=&subject_id=[&class_level_id=][&section_id=]
+     *
+     * class_level_id / section_id replaced the class_name / section strings the
+     * grid used to send. A class name is ambiguous — "Class 9" is a different
+     * cohort in the Bangla version and the English version — so it could never
+     * name one roster. Nothing sends the strings any more; they are gone rather
+     * than kept as aliases.
      */
     public function index(Request $request): JsonResponse
     {
         $data = $request->validate([
             'exam_id'    => ['required', 'integer', 'exists:pps_exams,id'],
-            'subject_id' => ['required', 'integer', 'exists:pps_subjects,id'],
-            'class_name' => ['nullable', 'string', 'max:20'],
-            'section'    => ['nullable', 'string', 'max:20'],
+            'subject_id' => ['required', 'integer', 'exists:subjects,id'],
+            'class_level_id' => ['nullable', 'integer', 'exists:class_levels,id'],
+            'section_id'     => ['nullable', 'integer', 'exists:sections,id'],
         ]);
 
         $exam       = Exam::with(['components', 'examType'])->findOrFail($data['exam_id']);
         $components = $exam->components;
 
-        $studentIds = $this->resolveStudentIds($exam, (int) $data['subject_id'], $data['class_name'] ?? null, $data['section'] ?? null);
+        $studentIds = $this->resolveStudentIds(
+            $exam,
+            (int) $data['subject_id'],
+            isset($data['class_level_id']) ? (int) $data['class_level_id'] : null,
+            isset($data['section_id']) ? (int) $data['section_id'] : null,
+        );
 
         $marks = Mark::whereIn('component_id', $components->pluck('id'))
             ->whereIn('student_id', $studentIds)
@@ -40,9 +54,11 @@ class MarksController extends Controller
             ->get(['component_id', 'student_id', 'marks_obtained'])
             ->groupBy('student_id');
 
+        // class_name / section are no longer columns on students — the rows below
+        // do not emit them, so nothing beyond the three real columns is selected.
         $students = Student::whereIn('id', $studentIds)
             ->orderBy('roll_number')
-            ->get(['id', 'name', 'roll_number', 'class_name', 'section']);
+            ->get(['id', 'name', 'roll_number']);
 
         return response()->json([
             'exam' => [
@@ -77,9 +93,9 @@ class MarksController extends Controller
     {
         $data = $request->validate([
             'exam_id'               => ['required', 'integer', 'exists:pps_exams,id'],
-            'subject_id'            => ['required', 'integer', 'exists:pps_subjects,id'],
-            'class_name'            => ['nullable', 'string', 'max:20'],
-            'section'               => ['nullable', 'string', 'max:20'],
+            'subject_id'            => ['required', 'integer', 'exists:subjects,id'],
+            'class_level_id'        => ['nullable', 'integer', 'exists:class_levels,id'],
+            'section_id'            => ['nullable', 'integer', 'exists:sections,id'],
             'rows'                  => ['required', 'array'],
             'rows.*.student_id'     => ['required', 'integer', 'exists:students,id'],
             'rows.*.marks'          => ['required', 'array'],
@@ -92,10 +108,10 @@ class MarksController extends Controller
         $enteredBy  = $user?->id;
 
         // Non-superadmin teachers may only write marks for exams they are assigned to.
+        // An assignment now hangs off the teachers row, not the user id — a login
+        // with no teacher record has no assignments and is refused.
         if (!$user?->hasAnyRole(['superadmin', 'admin', 'principal'])) {
-            $assigned = DB::table('pps_teacher_assignments')
-                ->where('teacher_id', $user->id)
-                ->exists();
+            $assigned = TeacherScope::assignments($user)->isNotEmpty();
             // For now scope check: teacher must have at least one assignment.
             // Full per-exam scoping is enforced below via resolveStudentIds.
             if (!$assigned) {
@@ -103,7 +119,12 @@ class MarksController extends Controller
             }
         }
 
-        $authorisedIds = $this->resolveStudentIds($exam, $subjectId, $data['class_name'] ?? null, $data['section'] ?? null)->flip()->toArray();
+        $authorisedIds = $this->resolveStudentIds(
+            $exam,
+            $subjectId,
+            isset($data['class_level_id']) ? (int) $data['class_level_id'] : null,
+            isset($data['section_id']) ? (int) $data['section_id'] : null,
+        )->flip()->toArray();
 
         $saved = 0;
         DB::transaction(function () use ($data, $components, $subjectId, $enteredBy, $authorisedIds, &$saved) {
@@ -134,36 +155,81 @@ class MarksController extends Controller
         return response()->json(['saved' => $saved], Response::HTTP_CREATED);
     }
 
-    private function resolveStudentIds(Exam $exam, int $subjectId, ?string $className = null, ?string $section = null): Collection
-    {
-        if ($exam->scope === 'global') {
-            $q = Student::query();
-            if ($className) $q->where('class_name', $className);
-            if ($section)   $q->where('section', $section);
-            return $q->pluck('id');
+    /**
+     * Which students an exam covers, as ids, narrowed by the caller's filter.
+     *
+     * A student's class and section are no longer columns — they live on the
+     * current enrollment's section — so both the exam's own scope and the
+     * caller's filter are expressed through that relation.
+     *
+     * The filter is a class_level_id / section_id pair, never a name. "Class 9"
+     * exists in both the Bangla and the English version and they are different
+     * cohorts, so a name identifies two classes at once and cannot be the thing
+     * a marks roster is built from.
+     *
+     * The caller's filter INTERSECTS the exam's scope; it can only ever shrink
+     * the set. That matters because bulkStore uses this same set as its
+     * authorisation list: naming a class the exam does not cover yields no
+     * students, and every submitted row is refused, rather than widening what
+     * the caller may write.
+     */
+    private function resolveStudentIds(
+        Exam $exam,
+        int $subjectId,
+        ?int $classLevelId = null,
+        ?int $sectionId = null,
+    ): Collection {
+        $students = Student::query();
+
+        // A global exam covers everybody, so only a class-scoped one contributes
+        // a scope of its own.
+        if ($exam->scope !== 'global') {
+            StudentTaxonomyFilter::applySectionIds($students, $this->scopeSectionIds($exam, $subjectId));
         }
 
+        if ($classLevelId !== null || $sectionId !== null) {
+            StudentTaxonomyFilter::apply($students, [
+                'level_id' => null,
+                'version_id' => null,
+                'group' => null,
+                'class_level_id' => $classLevelId,
+                'section_id' => $sectionId,
+            ]);
+        }
+
+        return $students->pluck('id');
+    }
+
+    /**
+     * The section ids a class-scoped exam covers, via pps_exam_class_map.
+     *
+     * Fails closed: no maps, or only degenerate ones, means no sections, and
+     * applySectionIds turns an empty set into "match nobody" rather than
+     * falling through to every student in the school.
+     *
+     * @return array<int, int>
+     */
+    private function scopeSectionIds(Exam $exam, int $subjectId): array
+    {
         $maps = ExamClassMap::where('exam_id', $exam->id)
             ->where(fn ($q) => $q->whereNull('subject_id')->orWhere('subject_id', $subjectId))
             ->get();
 
-        // Fail closed: no maps = no authorised students.
-        if ($maps->isEmpty()) {
-            return collect();
-        }
+        $sectionIds = [];
 
-        $studentQuery = Student::query()->where('id', 0); // start with no results
         foreach ($maps as $map) {
             // Skip degenerate maps with no class or section scope — misconfiguration.
-            if (!$map->class_id && !$map->section_id) {
+            if (! $map->class_level_id && ! $map->section_id) {
                 continue;
             }
-            $studentQuery->orWhere(function ($q) use ($map) {
-                if ($map->class_id)   $q->where('class_id', $map->class_id);
-                if ($map->section_id) $q->where('section_id', $map->section_id);
-            });
+
+            $sectionIds = array_merge($sectionIds, Section::query()
+                ->when($map->class_level_id, fn ($q, $classLevelId) => $q->where('class_level_id', $classLevelId))
+                ->when($map->section_id, fn ($q, $sectionId) => $q->whereKey($sectionId))
+                ->pluck('id')
+                ->all());
         }
 
-        return $studentQuery->pluck('id');
+        return array_values(array_unique(array_map('intval', $sectionIds)));
     }
 }

@@ -18,7 +18,6 @@ class RolePermissionSeeder extends Seeder
         'teacher_workspace'   => 'Teacher Workspace',
         'classes'             => 'Classes & Sections',
         'teacher_effectiveness' => 'Teacher Effectiveness',
-        'assessments'         => 'Assessments',
         'attendance'          => 'Attendance',
         'behavior'            => 'Behavior Cards',
         'classroom_ratings'   => 'Classroom Ratings',
@@ -47,11 +46,15 @@ class RolePermissionSeeder extends Seeder
         // Seed permission_modules
         $modules = array_keys(ModuleCapabilities::MAP);
         foreach ($modules as $i => $module) {
+            // permission_modules is now shared across products, and its unique
+            // key is (product, name) — RADAR's modules must be upserted on that
+            // pair or Postgres has no matching constraint for ON CONFLICT.
             DB::table('permission_modules')->upsert([
+                'product'    => 'radar',
                 'name'       => $module,
                 'label'      => self::MODULE_LABELS[$module] ?? ucfirst(str_replace('_', ' ', $module)),
                 'sort_order' => $i,
-            ], ['name'], ['label', 'sort_order']);
+            ], ['product', 'name'], ['label', 'sort_order']);
         }
 
         // Seed role_permissions from the static MAP
@@ -75,5 +78,30 @@ class RolePermissionSeeder extends Seeder
             ['role', 'module', 'action'],
             ['granted']
         );
+
+        $this->pruneRetiredModules($modules);
+    }
+
+    /**
+     * Delete rows for modules the code no longer defines.
+     *
+     * Both writes above are upserts, so retiring a module from
+     * ModuleCapabilities::MAP does NOT remove the rows a previous seed run left
+     * behind. That matters: ModuleCapabilities::forRole() builds the login
+     * payload's `capabilities` straight from role_permissions, so an orphaned
+     * `assessments.manage` row keeps granting a capability that guards no route
+     * long after the module is gone, and permission_modules keeps rendering it
+     * as an empty row in the permissions matrix UI.
+     *
+     * @param  array<int, string>  $modules  the modules the code currently defines
+     */
+    private function pruneRetiredModules(array $modules): void
+    {
+        DB::table('role_permissions')->whereNotIn('module', $modules)->delete();
+
+        DB::table('permission_modules')
+            ->where('product', 'radar')
+            ->whereNotIn('name', $modules)
+            ->delete();
     }
 }

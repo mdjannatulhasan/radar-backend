@@ -103,7 +103,14 @@ class MigrateMarksToNewSchema extends Command
 
             ['exam' => $exam, 'component' => $component] = $examCache[$examKey];
 
-            $subjectId = DB::table('pps_subjects')->where('name', $row->subject)->value('id');
+            // pps_subjects is gone; subjects live in sms-core and are keyed by
+            // full_name. Names are no longer unique — the same subject exists once
+            // per level/version — and the legacy row carries only a free-text name,
+            // so the lowest-id match wins.
+            $subjectId = DB::table('subjects')
+                ->where('full_name', $row->subject)
+                ->orderBy('id')
+                ->value('id');
             if (!$subjectId) continue;
 
             Mark::updateOrCreate(

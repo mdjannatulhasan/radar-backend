@@ -4,9 +4,11 @@ namespace App\Http\Controllers\Api\V1\Pps;
 
 use App\Http\Controllers\Controller;
 use App\Models\Pps\AttendanceRecord;
-use App\Models\Student;
-use App\Models\User;
+use SmsCore\Models\Student;
+use SmsCore\Models\User;
 use App\Services\Pps\ScoreCalculatorService;
+use App\Support\StudentTaxonomyFilter;
+use App\Support\TeacherScope;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -42,10 +44,14 @@ class AttendanceController extends Controller
         }
 
         if ($viewer?->hasAnyRole('teacher')) {
-            collect($data['attendances'])->pluck('student_id')->unique()->each(function (int $studentId) use ($viewer): void {
-                $student = Student::query()->findOrFail($studentId);
+            // Resolved once: a teacher's assignments are a fixed set of section
+            // ids, and an empty set denies every row.
+            $assignedSectionIds = TeacherScope::sectionIds($viewer);
 
-                if (! $viewer->isAssignedToClass($student->class_name, $student->section)) {
+            collect($data['attendances'])->pluck('student_id')->unique()->each(function (int $studentId) use ($assignedSectionIds): void {
+                $student = Student::query()->with('currentEnrollment:id,student_id,section_id')->findOrFail($studentId);
+
+                if ($student->section_id === null || ! in_array($student->section_id, $assignedSectionIds, true)) {
                     abort(Response::HTTP_FORBIDDEN, 'You are not assigned to one or more selected classes.');
                 }
             });
@@ -95,7 +101,7 @@ class AttendanceController extends Controller
 
         $student = Student::query()->findOrFail($data['student_id']);
 
-        if ($viewer?->hasAnyRole('teacher') && ! $viewer->isAssignedToClass($student->class_name, $student->section)) {
+        if ($viewer?->hasAnyRole('teacher') && ! TeacherScope::isAssignedToSection($viewer, $student->section_id)) {
             abort(Response::HTTP_FORBIDDEN, 'You are not assigned to this class.');
         }
 
@@ -123,7 +129,10 @@ class AttendanceController extends Controller
         /** @var User|null $viewer */
         $viewer = $request->user();
         $records = AttendanceRecord::query()
-            ->with('student:id,name,class_name,section,roll_number', 'markedBy:id,name')
+            ->with(array_merge(
+                ['student:id,name,roll_number', 'markedBy:id,name'],
+                StudentTaxonomyFilter::eagerLoadVia('student'),
+            ))
             ->when($viewer?->hasAnyRole('teacher'), fn ($query) => $query->where('marked_by', $viewer->id))
             ->when($request->filled('student_id'), fn ($query) => $query->where('student_id', $request->integer('student_id')))
             ->when($request->filled('date'), fn ($query) => $query->whereDate('date', $request->date('date')))
@@ -139,6 +148,9 @@ class AttendanceController extends Controller
         $errors = [];
         $upserts = collect();
         $timestamp = now();
+        $isTeacher = (bool) $viewer?->hasAnyRole('teacher');
+        // Empty for a teacher with no assignments, which denies every row.
+        $assignedSectionIds = $isTeacher ? TeacherScope::sectionIds($viewer) : [];
 
         foreach (array_values($rows) as $index => $row) {
             $rowNum = $index + 2;
@@ -161,7 +173,7 @@ class AttendanceController extends Controller
                 continue;
             }
 
-            if ($viewer?->hasAnyRole('teacher') && ! $viewer->isAssignedToClass($student->class_name, $student->section)) {
+            if ($isTeacher && ($student->section_id === null || ! in_array($student->section_id, $assignedSectionIds, true))) {
                 $errors[] = ['row' => $rowNum, 'message' => 'You are not assigned to this student or class.'];
                 continue;
             }
@@ -207,6 +219,7 @@ class AttendanceController extends Controller
         $studentCode = trim((string) ($row['student_code'] ?? ''));
 
         return Student::query()
+            ->with('currentEnrollment:id,student_id,section_id')
             ->when(
                 $studentId,
                 fn ($query) => $query->whereKey($studentId),

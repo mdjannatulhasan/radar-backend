@@ -2,15 +2,12 @@
 
 namespace Tests\Feature\Pps;
 
-use App\Models\Pps\Assessment;
+use App\Models\Pps\AttendanceRecord;
 use App\Models\Pps\ClassroomRating;
 use App\Models\Pps\Extracurricular;
 use App\Models\Pps\PerformanceSnapshot;
 use App\Models\Pps\PpsAlert;
 use App\Models\Pps\SchoolPpsConfig;
-use App\Models\Pps\TeacherAssignment;
-use App\Models\Student;
-use App\Models\User;
 use App\Services\Pps\ScoreCalculatorService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
@@ -22,14 +19,14 @@ class PhaseExpansionTest extends TestCase
 
     public function test_student_profile_endpoint_returns_phase_two_payload(): void
     {
-        $teacher = User::query()->create([
+        $teacher = $this->createUser([
             'name' => 'Teacher User',
             'email' => 'teacher@example.test',
             'role' => 'teacher',
             'password' => Hash::make('password'),
         ]);
 
-        $student = Student::query()->create([
+        $student = $this->makeStudent([
             'student_code' => 'PPS-201',
             'name' => 'Rafi Islam',
             'class_name' => '8',
@@ -62,7 +59,7 @@ class PhaseExpansionTest extends TestCase
 
         ClassroomRating::query()->create([
             'student_id' => $student->id,
-            'teacher_id' => $teacher->id,
+            'teacher_id' => $this->makeTeacher($teacher)->id,
             'subject' => 'Mathematics',
             'rating_period' => '2026-04-07',
             'participation' => 2,
@@ -90,25 +87,9 @@ class PhaseExpansionTest extends TestCase
             ],
         ]);
 
-        Assessment::query()->create([
-            'student_id' => $student->id,
-            'teacher_id' => $teacher->id,
-            'subject' => 'Mathematics',
-            'assessment_type' => 'class_test',
-            'term' => '2026-term-1',
-            'marks_obtained' => 41,
-            'total_marks' => 100,
-            'percentage' => 41,
-            'exam_date' => '2026-04-11',
-        ]);
+        $this->recordExamResult($student, 'Mathematics', '2026-04-11', 41, $teacher->id);
 
-        TeacherAssignment::query()->create([
-            'teacher_id' => $teacher->id,
-            'class_name' => '8',
-            'section' => 'A',
-            'subject' => 'Mathematics',
-            'is_class_teacher' => false,
-        ]);
+        $this->assignTeacher($teacher, '8', 'A', 'Mathematics');
 
         $response = $this->signInPps($teacher)->getJson("/api/v1/pps/students/{$student->id}?period=2026-04");
 
@@ -123,7 +104,7 @@ class PhaseExpansionTest extends TestCase
 
     public function test_parent_report_endpoint_returns_simplified_payload(): void
     {
-        $student = Student::query()->create([
+        $student = $this->makeStudent([
             'student_code' => 'PPS-202',
             'name' => 'Nabila Sultana',
             'class_name' => '7',
@@ -154,7 +135,7 @@ class PhaseExpansionTest extends TestCase
             'calculated_at' => now(),
         ]);
 
-        $guardian = User::query()->create([
+        $guardian = $this->createUser([
             'name' => 'Guardian User',
             'email' => 'guardian@example.test',
             'role' => 'guardian',
@@ -175,14 +156,14 @@ class PhaseExpansionTest extends TestCase
 
     public function test_class_analytics_endpoint_returns_summary_and_ranking(): void
     {
-        $teacher = User::query()->create([
+        $teacher = $this->createUser([
             'name' => 'Math Teacher',
             'email' => 'math@example.test',
             'role' => 'teacher',
             'password' => Hash::make('password'),
         ]);
 
-        $studentA = Student::query()->create([
+        $studentA = $this->makeStudent([
             'student_code' => 'PPS-203',
             'name' => 'Student A',
             'class_name' => '9',
@@ -190,7 +171,7 @@ class PhaseExpansionTest extends TestCase
             'roll_number' => 1,
         ]);
 
-        $studentB = Student::query()->create([
+        $studentB = $this->makeStudent([
             'student_code' => 'PPS-204',
             'name' => 'Student B',
             'class_name' => '9',
@@ -215,28 +196,12 @@ class PhaseExpansionTest extends TestCase
                 'calculated_at' => now(),
             ]);
 
-            Assessment::query()->create([
-                'student_id' => $student->id,
-                'teacher_id' => $teacher->id,
-                'subject' => 'Mathematics',
-                'assessment_type' => 'class_test',
-                'term' => '2026-term-1',
-                'marks_obtained' => $academic,
-                'total_marks' => 100,
-                'percentage' => $academic,
-                'exam_date' => '2026-04-10',
-            ]);
+            $this->recordExamResult($student, 'Mathematics', '2026-04-10', $academic, $teacher->id);
         }
 
-        TeacherAssignment::query()->create([
-            'teacher_id' => $teacher->id,
-            'class_name' => '9',
-            'section' => 'A',
-            'subject' => 'Mathematics',
-            'is_class_teacher' => true,
-        ]);
+        $this->assignTeacher($teacher, '9', 'A', 'Mathematics', isClassTeacher: true);
 
-        $principal = User::query()->create([
+        $principal = $this->createUser([
             'name' => 'Principal User',
             'email' => 'principal@example.test',
             'role' => 'principal',
@@ -259,14 +224,14 @@ class PhaseExpansionTest extends TestCase
 
     public function test_student_list_and_alert_list_include_real_snapshot_deltas(): void
     {
-        $principal = User::query()->create([
+        $principal = $this->createUser([
             'name' => 'Principal User',
             'email' => 'principal-list@example.test',
             'role' => 'principal',
             'password' => Hash::make('password'),
         ]);
 
-        $student = Student::query()->create([
+        $student = $this->makeStudent([
             'student_code' => 'PPS-205',
             'name' => 'Anika Sarker',
             'class_name' => '10',
@@ -335,21 +300,21 @@ class PhaseExpansionTest extends TestCase
 
     public function test_teacher_effectiveness_includes_previous_average_for_trend_rendering(): void
     {
-        $principal = User::query()->create([
+        $principal = $this->createUser([
             'name' => 'Principal Trends',
             'email' => 'principal-trends@example.test',
             'role' => 'principal',
             'password' => Hash::make('password'),
         ]);
 
-        $teacher = User::query()->create([
+        $teacher = $this->createUser([
             'name' => 'Mariam Rahman',
             'email' => 'mariam@example.test',
             'role' => 'teacher',
             'password' => Hash::make('password'),
         ]);
 
-        $student = Student::query()->create([
+        $student = $this->makeStudent([
             'student_code' => 'PPS-206',
             'name' => 'Trend Student',
             'class_name' => '9',
@@ -357,29 +322,10 @@ class PhaseExpansionTest extends TestCase
             'roll_number' => 6,
         ]);
 
-        Assessment::query()->create([
-            'student_id' => $student->id,
-            'teacher_id' => $teacher->id,
-            'subject' => 'Mathematics',
-            'assessment_type' => 'class_test',
-            'term' => '2026-term-1',
-            'marks_obtained' => 68,
-            'total_marks' => 100,
-            'percentage' => 68,
-            'exam_date' => '2026-03-10',
-        ]);
+        $this->assignTeacher($teacher, '9', 'A', 'Mathematics');
 
-        Assessment::query()->create([
-            'student_id' => $student->id,
-            'teacher_id' => $teacher->id,
-            'subject' => 'Mathematics',
-            'assessment_type' => 'class_test',
-            'term' => '2026-term-1',
-            'marks_obtained' => 74,
-            'total_marks' => 100,
-            'percentage' => 74,
-            'exam_date' => '2026-04-10',
-        ]);
+        $this->recordExamResult($student, 'Mathematics', '2026-03-10', 68, $teacher->id);
+        $this->recordExamResult($student, 'Mathematics', '2026-04-10', 74, $teacher->id);
 
         $this->signInPps($principal)
             ->getJson('/api/v1/pps/teachers/effectiveness?period=2026-04')
@@ -392,7 +338,7 @@ class PhaseExpansionTest extends TestCase
 
     public function test_teacher_cannot_access_principal_dashboard(): void
     {
-        $teacher = User::query()->create([
+        $teacher = $this->createUser([
             'name' => 'Teacher',
             'email' => 'teacher-role@example.test',
             'role' => 'teacher',
@@ -408,7 +354,7 @@ class PhaseExpansionTest extends TestCase
     {
         SchoolPpsConfig::current();
 
-        $student = Student::query()->create([
+        $student = $this->makeStudent([
             'student_code' => 'PPS-205',
             'name' => 'Risk Student',
             'class_name' => '8',
@@ -431,19 +377,10 @@ class PhaseExpansionTest extends TestCase
             'calculated_at' => now(),
         ]);
 
-        \App\Models\Pps\Assessment::query()->create([
-            'student_id' => $student->id,
-            'subject' => 'Mathematics',
-            'assessment_type' => 'class_test',
-            'term' => '2026-term-1',
-            'marks_obtained' => 28,
-            'total_marks' => 100,
-            'percentage' => 28,
-            'exam_date' => '2026-04-12',
-        ]);
+        $this->recordExamResult($student, 'Mathematics', '2026-04-12', 28);
 
         foreach (range(1, 10) as $day) {
-            \App\Models\Pps\AttendanceRecord::query()->create([
+            AttendanceRecord::query()->create([
                 'student_id' => $student->id,
                 'date' => sprintf('2026-04-%02d', $day),
                 'status' => $day <= 6 ? 'absent' : 'present',
@@ -460,14 +397,14 @@ class PhaseExpansionTest extends TestCase
 
     public function test_report_generation_supports_csv_and_pdf_formats(): void
     {
-        $principal = User::query()->create([
+        $principal = $this->createUser([
             'name' => 'Principal',
             'email' => 'principal-reports@example.test',
             'role' => 'principal',
             'password' => Hash::make('password'),
         ]);
 
-        $student = Student::query()->create([
+        $student = $this->makeStudent([
             'student_code' => 'PPS-206',
             'name' => 'Report Student',
             'class_name' => '9',
@@ -504,14 +441,14 @@ class PhaseExpansionTest extends TestCase
 
     public function test_student_context_endpoint_respects_limited_teacher_visibility(): void
     {
-        $teacher = User::query()->create([
+        $teacher = $this->createUser([
             'name' => 'Teacher User',
             'email' => 'teacher-context@example.test',
             'role' => 'teacher',
             'password' => Hash::make('password'),
         ]);
 
-        $student = Student::query()->create([
+        $student = $this->makeStudent([
             'student_code' => 'PPS-207',
             'name' => 'Context Student',
             'class_name' => '8',
@@ -524,13 +461,7 @@ class PhaseExpansionTest extends TestCase
             'confidential_context' => 'Teacher should not see this text.',
         ]);
 
-        TeacherAssignment::query()->create([
-            'teacher_id' => $teacher->id,
-            'class_name' => '8',
-            'section' => 'A',
-            'subject' => 'Mathematics',
-            'is_class_teacher' => false,
-        ]);
+        $this->assignTeacher($teacher, '8', 'A', 'Mathematics');
 
         $response = $this->signInPps($teacher)
             ->getJson("/api/v1/pps/students/{$student->id}/context");
@@ -544,33 +475,28 @@ class PhaseExpansionTest extends TestCase
 
     public function test_teacher_student_list_is_limited_to_assigned_classes(): void
     {
-        $teacher = User::query()->create([
+        $teacher = $this->createUser([
             'name' => 'Scoped Teacher',
             'email' => 'scoped-teacher@example.test',
             'role' => 'teacher',
             'password' => Hash::make('password'),
         ]);
 
-        $visibleStudent = Student::query()->create([
+        $visibleStudent = $this->makeStudent([
             'student_code' => 'PPS-301',
             'name' => 'Visible Student',
             'class_name' => '10',
             'section' => 'A',
         ]);
 
-        $hiddenStudent = Student::query()->create([
+        $hiddenStudent = $this->makeStudent([
             'student_code' => 'PPS-302',
             'name' => 'Hidden Student',
             'class_name' => '10',
             'section' => 'B',
         ]);
 
-        TeacherAssignment::query()->create([
-            'teacher_id' => $teacher->id,
-            'class_name' => '10',
-            'section' => 'A',
-            'subject' => 'Mathematics',
-        ]);
+        $this->assignTeacher($teacher, '10', 'A', 'Mathematics');
 
         foreach ([$visibleStudent, $hiddenStudent] as $student) {
             PerformanceSnapshot::query()->create([
@@ -599,21 +525,21 @@ class PhaseExpansionTest extends TestCase
 
     public function test_notification_run_generates_logs_for_principal(): void
     {
-        $principal = User::query()->create([
+        $principal = $this->createUser([
             'name' => 'Principal Notifications',
             'email' => 'principal-notify@example.test',
             'role' => 'principal',
             'password' => Hash::make('password'),
         ]);
 
-        $guardian = User::query()->create([
+        $guardian = $this->createUser([
             'name' => 'Guardian Notifications',
             'email' => 'guardian-notify@example.test',
             'role' => 'guardian',
             'password' => Hash::make('password'),
         ]);
 
-        $student = Student::query()->create([
+        $student = $this->makeStudent([
             'student_code' => 'PPS-208',
             'name' => 'Notify Student',
             'class_name' => '9',
@@ -665,14 +591,14 @@ class PhaseExpansionTest extends TestCase
 
     public function test_full_data_export_report_returns_csv(): void
     {
-        $principal = User::query()->create([
+        $principal = $this->createUser([
             'name' => 'Principal Export',
             'email' => 'principal-export@example.test',
             'role' => 'principal',
             'password' => Hash::make('password'),
         ]);
 
-        $student = Student::query()->create([
+        $student = $this->makeStudent([
             'student_code' => 'PPS-209',
             'name' => 'Export Student',
             'class_name' => '10',

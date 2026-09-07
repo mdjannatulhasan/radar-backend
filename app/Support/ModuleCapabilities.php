@@ -4,6 +4,7 @@ namespace App\Support;
 
 use App\Models\Pps\RolePermission;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 
 final class ModuleCapabilities
 {
@@ -27,7 +28,6 @@ final class ModuleCapabilities
         'teacher_workspace'   => ['view'            => ['teacher']],
         'classes'             => ['view'            => ['admin', 'principal', 'superadmin', 'teacher']],
         'teacher_effectiveness' => ['view'          => ['admin', 'principal', 'superadmin']],
-        'assessments'         => ['manage'          => ['admin', 'superadmin', 'teacher']],
         'attendance'          => ['manage'          => ['admin', 'superadmin', 'teacher']],
         'behavior'            => ['manage'          => ['admin', 'superadmin', 'teacher']],
         'classroom_ratings'   => ['manage'          => ['admin', 'superadmin', 'teacher']],
@@ -104,11 +104,28 @@ final class ModuleCapabilities
 
     public static function bustCache(string $role): void
     {
-        Cache::forget("caps:{$role}");
-        foreach (self::MAP as $module => $actions) {
-            foreach (array_keys($actions) as $action) {
-                Cache::forget("cap:{$role}:{$module}:{$action}");
+        // Never let a cache problem fail the write that already succeeded.
+        // Under tenancy every Cache call is routed through ->tags() by
+        // stancl's CacheManager, so a store that cannot tag (database, file)
+        // throws BadMethodCallException here — after the permission rows were
+        // committed. That surfaced as "saved, then 500", and left the UI
+        // reporting failure on a successful save.
+        //
+        // roleHas() already swallows the same exception on the read side, so
+        // a non-taggable store degrades to the static MAP rather than erroring.
+        try {
+            Cache::forget("caps:{$role}");
+            foreach (self::MAP as $module => $actions) {
+                foreach (array_keys($actions) as $action) {
+                    Cache::forget("cap:{$role}:{$module}:{$action}");
+                }
             }
+        } catch (\Throwable $e) {
+            Log::warning('capability_cache_bust_failed', [
+                'role' => $role,
+                'store' => config('cache.default'),
+                'message' => $e->getMessage(),
+            ]);
         }
     }
 

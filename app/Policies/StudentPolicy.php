@@ -2,9 +2,10 @@
 
 namespace App\Policies;
 
-use App\Models\Student;
-use App\Models\User;
+use SmsCore\Models\Student;
+use SmsCore\Models\User;
 use App\Support\PpsPermissions;
+use App\Support\TeacherScope;
 
 class StudentPolicy
 {
@@ -19,7 +20,9 @@ class StudentPolicy
         }
 
         if ($user->hasAnyRole('teacher')) {
-            return $user->canAccessStudent($student);
+            // Teacher reach is no longer a method on the user: it is derived from
+            // pps_teacher_assignments -> sections. No assignments means no students.
+            return TeacherScope::canAccessStudent($user, $student);
         }
 
         return $user->hasAnyRole('guardian') && $user->isGuardianOf($student->id);

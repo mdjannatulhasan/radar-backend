@@ -6,8 +6,10 @@ use App\Models\Pps\ComputedScore;
 use App\Models\Pps\Mark;
 use App\Models\Pps\CounselingSession;
 use App\Models\Pps\PerformanceSnapshot;
-use App\Models\Student;
-use App\Models\User;
+use App\Support\StudentTaxonomyFilter;
+use SmsCore\Models\Student;
+use SmsCore\Models\Subject;
+use SmsCore\Models\User;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 
@@ -147,10 +149,7 @@ class StudentInsightService
         }
 
         $period = $snapshot->snapshot_period;
-        $classmates = Student::query()
-            ->where('class_name', $student->class_name)
-            ->where('section', $student->section)
-            ->pluck('id');
+        $classmates = $this->classmateIds($student);
 
         $results = $tuitionSubjects->map(function (array $entry) use ($classmates, $period, $snapshot): array {
             $subject = $entry['subject'];
@@ -159,9 +158,9 @@ class StudentInsightService
             $classAverage = (float) (Mark::query()
                 ->join('pps_exam_components', 'pps_exam_components.id', '=', 'pps_marks.component_id')
                 ->join('pps_exams', 'pps_exams.id', '=', 'pps_exam_components.exam_id')
-                ->join('pps_subjects', 'pps_subjects.id', '=', 'pps_marks.subject_id')
+                ->join('subjects', 'subjects.id', '=', 'pps_marks.subject_id')
                 ->whereIn('pps_marks.student_id', $classmates)
-                ->where('pps_subjects.name', $subject)
+                ->where('subjects.full_name', $subject)
                 ->whereYear('pps_exams.exam_date', (int) substr($period, 0, 4))
                 ->whereMonth('pps_exams.exam_date', (int) substr($period, 5, 2))
                 ->selectRaw('AVG((pps_marks.marks_obtained / NULLIF(pps_exam_components.max_raw_marks, 0)) * 100) as avg_pct')
@@ -196,13 +195,10 @@ class StudentInsightService
             return [];
         }
 
-        $classmates = Student::query()
-            ->where('class_name', $student->class_name)
-            ->where('section', $student->section)
-            ->pluck('id');
+        $classmates = $this->classmateIds($student);
 
         return $subjects->map(function (array $data, string $subject) use ($student, $classmates, $periodDate): array {
-            $subjectId = \Illuminate\Support\Facades\DB::table('pps_subjects')->where('name', $subject)->value('id');
+            $subjectId = $this->subjectIdForStudent($student, $subject);
 
             $averages = ComputedScore::query()
                 ->join('pps_exams', 'pps_exams.id', '=', 'pps_computed_scores.exam_id')
@@ -227,18 +223,55 @@ class StudentInsightService
 
     private function calculateClassRank(Student $student, string $period): ?int
     {
+        // The class cohort is no longer a pair of columns on students — it is the
+        // set of students sharing this student's current section.
         $ranked = PerformanceSnapshot::query()
             ->forPeriod($period)
-            ->join('students', 'students.id', '=', 'pps_performance_snapshots.student_id')
-            ->where('students.class_name', $student->class_name)
-            ->where('students.section', $student->section)
+            ->whereIn('student_id', $this->classmateIds($student))
             ->orderByDesc('overall_score')
-            ->pluck('pps_performance_snapshots.student_id')
+            ->pluck('student_id')
             ->values();
 
         $position = $ranked->search($student->id);
 
         return $position === false ? null : $position + 1;
+    }
+
+    /**
+     * Everyone enrolled in this student's current section — the cohort the old
+     * (class_name, section) column pair used to name. A student with no current
+     * enrollment has no cohort, so ranks and class averages come back empty
+     * rather than silently pooling every unplaced student together.
+     *
+     * @return Collection<int, int>
+     */
+    private function classmateIds(Student $student): Collection
+    {
+        $sectionId = $student->section_id;
+
+        $query = Student::query();
+        StudentTaxonomyFilter::applySectionIds($query, $sectionId === null ? [] : [$sectionId]);
+
+        return $query->pluck('id');
+    }
+
+    /**
+     * Subject names are no longer unique: a subject row exists per level and
+     * version, so resolve the name against this student's own class level first
+     * and only fall back to a bare name match.
+     */
+    private function subjectIdForStudent(Student $student, string $subjectName): ?int
+    {
+        $classLevel = $student->currentEnrollment?->section?->classLevel;
+
+        $id = Subject::query()
+            ->where('full_name', $subjectName)
+            ->when($classLevel?->level_id, fn ($query, $levelId) => $query->where('level_id', $levelId))
+            ->when($classLevel?->version_id, fn ($query, $versionId) => $query->where('version_id', $versionId))
+            ->value('id')
+            ?? Subject::query()->where('full_name', $subjectName)->orderBy('id')->value('id');
+
+        return $id === null ? null : (int) $id;
     }
 
     private function hasSensitiveContext(Student $student): bool

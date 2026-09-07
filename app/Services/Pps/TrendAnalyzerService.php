@@ -31,9 +31,9 @@ class TrendAnalyzerService
 
         return ComputedScore::query()
             ->join('pps_exams', 'pps_exams.id', '=', 'pps_computed_scores.exam_id')
-            ->join('pps_subjects', 'pps_subjects.id', '=', 'pps_computed_scores.subject_id')
+            ->join('subjects', 'subjects.id', '=', 'pps_computed_scores.subject_id')
             ->where('pps_computed_scores.student_id', $studentId)
-            ->where('pps_subjects.name', $subjectName)
+            ->where('subjects.full_name', $subjectName)
             ->whereIn(DB::raw("to_char(pps_exams.exam_date, 'YYYY-MM')"), $periods)
             ->groupBy(DB::raw("to_char(pps_exams.exam_date, 'YYYY-MM')"))
             ->selectRaw("to_char(pps_exams.exam_date, 'YYYY-MM') as period, AVG(pps_computed_scores.percentage) as avg_pct")

@@ -5,10 +5,11 @@ namespace App\Http\Controllers\Api\V1\Pps;
 use App\Http\Controllers\Controller;
 use App\Models\Pps\PpsNotificationLog;
 use App\Models\Pps\PerformanceSnapshot;
-use App\Models\Student;
+use SmsCore\Models\Student;
 use App\Services\Pps\ReportCardService;
 use App\Services\Pps\ReportExportService;
 use App\Services\Pps\SimplePdfService;
+use App\Support\StudentTaxonomyFilter;
 use Illuminate\Http\Request;
 
 class ReportController extends Controller
@@ -94,7 +95,9 @@ class ReportController extends Controller
 
     private function studentCard(Request $request, string $period, string $format, string $lang)
     {
-        $student = Student::query()->findOrFail($request->integer('student_id'));
+        $student = Student::query()
+            ->with(StudentTaxonomyFilter::eagerLoad())
+            ->findOrFail($request->integer('student_id'));
         $snapshot = PerformanceSnapshot::query()->where('student_id', $student->id)->forPeriod($period)->firstOrFail();
         $lines = $this->reports->buildStudentCard($student, $snapshot, $lang);
 
@@ -117,7 +120,10 @@ class ReportController extends Controller
         $snapshots = PerformanceSnapshot::query()
             ->forPeriod($period)
             ->atRisk()
-            ->with('student:id,name,class_name,section,roll_number')
+            ->with(array_merge(
+                ['student:id,name,roll_number'],
+                StudentTaxonomyFilter::eagerLoadVia('student'),
+            ))
             ->orderByDesc('risk_score')
             ->get();
         $lines = $this->reports->buildAtRiskList($snapshots);
@@ -168,7 +174,7 @@ class ReportController extends Controller
     {
         $snapshots = PerformanceSnapshot::query()
             ->forPeriod($period)
-            ->with('student')
+            ->with(array_merge(['student'], StudentTaxonomyFilter::eagerLoadVia('student')))
             ->orderByDesc('risk_score')
             ->get();
 
@@ -204,7 +210,10 @@ class ReportController extends Controller
     {
         $logs = PpsNotificationLog::query()
             ->where('snapshot_period', $period)
-            ->with('student:id,name,class_name,section')
+            ->with(array_merge(
+                ['student:id,name'],
+                StudentTaxonomyFilter::eagerLoadVia('student'),
+            ))
             ->orderByDesc('generated_at')
             ->get();
 

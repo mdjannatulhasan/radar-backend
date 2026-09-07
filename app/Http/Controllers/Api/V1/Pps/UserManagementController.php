@@ -3,7 +3,7 @@
 namespace App\Http\Controllers\Api\V1\Pps;
 
 use App\Http\Controllers\Controller;
-use App\Models\User;
+use SmsCore\Models\User;
 use App\Support\ModuleCapabilities;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -63,9 +63,14 @@ class UserManagementController extends Controller
             'role'     => ['required', 'string', Rule::in(self::MANAGEABLE_ROLES)],
         ]);
 
-        $this->guardPrivilegeEscalation($request->user(), $data['role']);
+        $actor = $request->user();
+
+        $this->guardPrivilegeEscalation($actor, $data['role']);
 
         $user = User::query()->create([
+            // users.school_id is NOT NULL: a new account belongs to the school
+            // of whoever created it.
+            'school_id' => $actor->school_id,
             'name'      => $data['name'],
             'email'     => $data['email'],
             'password'  => Hash::make($data['password']),

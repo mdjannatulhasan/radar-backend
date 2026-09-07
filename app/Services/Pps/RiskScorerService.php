@@ -70,7 +70,7 @@ class RiskScorerService
             ->selectRaw("
                 SUM(CASE WHEN card_type = 'red' THEN 1 ELSE 0 END) as reds,
                 SUM(CASE WHEN card_type = 'yellow' THEN 1 ELSE 0 END) as yellows,
-                SUM(CASE WHEN is_integrity_violation = 1 THEN 1 ELSE 0 END) as integrity
+                SUM(CASE WHEN is_integrity_violation = true THEN 1 ELSE 0 END) as integrity
             ")
             ->first();
 

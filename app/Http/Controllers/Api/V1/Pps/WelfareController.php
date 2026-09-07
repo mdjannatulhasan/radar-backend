@@ -4,8 +4,9 @@ namespace App\Http\Controllers\Api\V1\Pps;
 
 use App\Http\Controllers\Controller;
 use App\Models\Pps\WelfareIntervention;
-use App\Models\Student;
+use SmsCore\Models\Student;
 use App\Support\PpsPermissions;
+use App\Support\StudentTaxonomyFilter;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -106,12 +107,17 @@ class WelfareController extends Controller
     {
         $this->requireWelfareView($request);
 
-        $query = Student::query()->select([
-            'id', 'name', 'student_code', 'class_name', 'section', 'roll_number',
-            'guardian_name', 'guardian_phone', 'guardian_email',
-            'scholarship_status', 'economic_status', 'economically_vulnerable',
-            'family_status', 'stream_id',
-        ]);
+        // class_name / section / stream_id are no longer columns. The first two
+        // come from the current enrollment's section; stream_id's successor is
+        // class_levels.group, emitted below as `group`.
+        $query = Student::query()
+            ->select([
+                'id', 'name', 'student_code', 'roll_number',
+                'guardian_name', 'guardian_phone', 'guardian_email',
+                'scholarship_status', 'economic_status', 'economically_vulnerable',
+                'family_status',
+            ])
+            ->with(StudentTaxonomyFilter::eagerLoad());
 
         if ($request->boolean('vulnerable')) {
             $query->where('economically_vulnerable', true);
@@ -122,7 +128,12 @@ class WelfareController extends Controller
         }
 
         if ($request->filled('class_name')) {
-            $query->where('class_name', $request->string('class_name'));
+            // A class name is ambiguous across versions now, so match every
+            // section that carries it. No match denies rather than allows.
+            StudentTaxonomyFilter::applySectionIds(
+                $query,
+                StudentTaxonomyFilter::sectionIdsForNames($request->string('class_name')->toString(), null),
+            );
         }
 
         if ($request->filled('search')) {
@@ -133,9 +144,28 @@ class WelfareController extends Controller
             });
         }
 
-        $students = $query->orderBy('class_name')->orderBy('section')->orderBy('roll_number')->get();
+        StudentTaxonomyFilter::orderByClassAndSection($query)->orderBy('roll_number');
 
-        return response()->json(['data' => $students]);
+        $students = $query->get();
+
+        return response()->json([
+            'data' => $students->map(fn (Student $student) => [
+                'id' => $student->id,
+                'name' => $student->name,
+                'student_code' => $student->student_code,
+                'class_name' => $student->class_name,
+                'section' => $student->section_name,
+                'group' => $student->currentEnrollment?->section?->classLevel?->group,
+                'roll_number' => $student->roll_number,
+                'guardian_name' => $student->guardian_name,
+                'guardian_phone' => $student->guardian_phone,
+                'guardian_email' => $student->guardian_email,
+                'scholarship_status' => $student->scholarship_status,
+                'economic_status' => $student->economic_status,
+                'economically_vulnerable' => $student->economically_vulnerable,
+                'family_status' => $student->family_status,
+            ])->values(),
+        ]);
     }
 
     /**
@@ -146,16 +176,18 @@ class WelfareController extends Controller
     {
         $this->requireWelfareView($request);
 
-        $students = Student::query()
+        $export = Student::query()
             ->where('economically_vulnerable', true)
             ->select([
-                'name', 'student_code', 'class_name', 'section', 'roll_number',
+                'id', 'name', 'student_code', 'roll_number',
                 'guardian_name', 'guardian_phone', 'guardian_email',
                 'scholarship_status', 'economic_status', 'family_status',
             ])
-            ->orderBy('class_name')
-            ->orderBy('section')
-            ->get();
+            ->with(StudentTaxonomyFilter::eagerLoad());
+
+        StudentTaxonomyFilter::orderByClassAndSection($export);
+
+        $students = $export->get();
 
         $filename = 'welfare-vulnerable-students-'.now()->format('Y-m-d').'.csv';
 
@@ -168,7 +200,7 @@ class WelfareController extends Controller
             ]);
             foreach ($students as $s) {
                 fputcsv($out, [
-                    $s->name, $s->student_code, $s->class_name, $s->section, $s->roll_number,
+                    $s->name, $s->student_code, $s->class_name, $s->section_name, $s->roll_number,
                     $s->guardian_name, $s->guardian_phone, $s->guardian_email,
                     $s->scholarship_status ?? '', $s->economic_status ?? '', $s->family_status ?? '',
                 ]);

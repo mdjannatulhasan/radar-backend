@@ -1,7 +1,5 @@
 <?php
 
-use App\Models\User;
-
 return [
 
     /*
@@ -42,6 +40,32 @@ return [
             'driver' => 'session',
             'provider' => 'users',
         ],
+
+        /*
+         * Platform super admins: central `public.admins`, one token flow of
+         * their own, used only by /api/v1/platform/*.
+         *
+         * This guard is NOT interchangeable with the tenant `sanctum` guard
+         * that /api/v1/pps/* uses. The two are kept apart by three things:
+         *
+         *  1. Host. Platform routes carry `central`, which 404s the moment
+         *     tenancy initialized; tenant routes carry `product:radar`, which
+         *     400s when it did not. No host serves both.
+         *  2. Storage. Sanctum's PersonalAccessToken rides the default
+         *     connection, whose search_path tenancy swaps per request. Admin
+         *     tokens are minted on a central host and land in
+         *     public.personal_access_tokens; a school user's tokens are minted
+         *     on their subdomain and land in
+         *     tenant_<slug>.personal_access_tokens. Neither lookup can see the
+         *     other's rows.
+         *  3. Type. `platform.admin` asserts the resolved user really is an
+         *     Admin, because Sanctum's guard itself does not check tokenable
+         *     type against the provider.
+         */
+        'admin' => [
+            'driver' => 'sanctum',
+            'provider' => 'admins',
+        ],
     ],
 
     /*
@@ -64,13 +88,13 @@ return [
     'providers' => [
         'users' => [
             'driver' => 'eloquent',
-            'model' => env('AUTH_MODEL', User::class),
+            'model' => env('AUTH_MODEL', SmsCore\Models\User::class),
         ],
 
-        // 'users' => [
-        //     'driver' => 'database',
-        //     'table' => 'users',
-        // ],
+        'admins' => [
+            'driver' => 'eloquent',
+            'model' => SmsCore\Models\Admin::class,
+        ],
     ],
 
     /*

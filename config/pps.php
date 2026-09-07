@@ -20,6 +20,8 @@ return [
         'yellow_cards_warning' => 3,
         'heatmap_score_critical' => 70,
         'heatmap_score_attention' => 82,
+        'early_warning_risk' => 40,
+        'early_warning_min_history' => 3,
     ],
     'notifications' => [
         'notify_parent_on_warning' => true,

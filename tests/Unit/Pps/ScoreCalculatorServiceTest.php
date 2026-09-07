@@ -2,13 +2,11 @@
 
 namespace Tests\Unit\Pps;
 
-use App\Models\Pps\Assessment;
 use App\Models\Pps\AttendanceRecord;
 use App\Models\Pps\BehaviorCard;
 use App\Models\Pps\ClassroomRating;
 use App\Models\Pps\Extracurricular;
 use App\Models\Pps\SchoolPpsConfig;
-use App\Models\Student;
 use App\Services\Pps\ScoreCalculatorService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -21,7 +19,7 @@ class ScoreCalculatorServiceTest extends TestCase
     {
         SchoolPpsConfig::current();
 
-        $student = Student::query()->create([
+        $student = $this->makeStudent([
             'student_code' => 'PPS-010',
             'name' => 'Nabila Sultana',
             'class_name' => '8',
@@ -29,21 +27,18 @@ class ScoreCalculatorServiceTest extends TestCase
             'roll_number' => 10,
         ]);
 
+        // A result is no longer one flat pps_assessments row: it is a mark
+        // against an exam component plus the computed score the risk engine
+        // averages. Three separate exam dates, because calcAcademic() averages
+        // over a three-month window while buildDetailData() reports the anchor
+        // month alone — that is why academic_score below is 70 (the mean of
+        // 80/70/60) but the Mathematics detail is 60 (April only).
         foreach ([
             ['Mathematics', '2026-02-12', 80],
             ['Mathematics', '2026-03-12', 70],
             ['Mathematics', '2026-04-12', 60],
         ] as [$subject, $date, $percentage]) {
-            Assessment::query()->create([
-                'student_id' => $student->id,
-                'subject' => $subject,
-                'assessment_type' => 'class_test',
-                'term' => '2026-term-1',
-                'marks_obtained' => $percentage,
-                'total_marks' => 100,
-                'percentage' => $percentage,
-                'exam_date' => $date,
-            ]);
+            $this->recordExamResult($student, $subject, $date, $percentage);
         }
 
         foreach (range(1, 8) as $day) {

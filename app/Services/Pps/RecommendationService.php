@@ -3,7 +3,7 @@
 namespace App\Services\Pps;
 
 use App\Models\Pps\PerformanceSnapshot;
-use App\Models\Student;
+use SmsCore\Models\Student;
 
 class RecommendationService
 {

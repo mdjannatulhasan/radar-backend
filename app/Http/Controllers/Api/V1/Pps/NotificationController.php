@@ -12,6 +12,7 @@ class NotificationController extends Controller
 {
     public function __construct(
         private readonly NotificationDigestService $notifications,
+        private readonly \App\Services\Pps\EarlyWarningService $earlyWarnings,
     ) {
     }
 
@@ -38,6 +39,7 @@ class NotificationController extends Controller
             'alerts' => $this->notifications->generateAlertNotifications($period),
             'monthly-parent-reports' => $this->notifications->generateMonthlyParentReports($period),
             'weekly-principal-summary' => $this->notifications->generateWeeklyPrincipalSummary($period),
+            'early-warnings' => $this->earlyWarnings->generate($period)['created'],
             default => null,
         };
 

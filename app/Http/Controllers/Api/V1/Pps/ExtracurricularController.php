@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Pps;
 use App\Http\Controllers\Controller;
 use App\Models\Pps\Extracurricular;
 use App\Services\Pps\ScoreCalculatorService;
+use App\Support\StudentTaxonomyFilter;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -18,7 +19,10 @@ class ExtracurricularController extends Controller
     public function index(Request $request): JsonResponse
     {
         $records = Extracurricular::query()
-            ->with('student:id,name,class_name,section,roll_number')
+            ->with(array_merge(
+                ['student:id,name,roll_number'],
+                StudentTaxonomyFilter::eagerLoadVia('student'),
+            ))
             ->when($request->filled('student_id'), fn ($query) => $query->where('student_id', $request->integer('student_id')))
             ->orderByDesc('event_date')
             ->limit(100)

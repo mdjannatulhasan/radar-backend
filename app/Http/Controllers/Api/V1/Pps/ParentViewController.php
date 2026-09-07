@@ -7,9 +7,10 @@ use App\Models\Pps\ComputedScore;
 use App\Models\Pps\Exam;
 use App\Models\Pps\Extracurricular;
 use App\Models\Pps\PerformanceSnapshot;
-use App\Models\Student;
+use SmsCore\Models\Student;
 use App\Services\Pps\RecommendationService;
 use App\Services\Pps\StudentInsightService;
+use App\Support\StudentTaxonomyFilter;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -30,14 +31,27 @@ class ParentViewController extends Controller
             abort(Response::HTTP_FORBIDDEN, 'Guardian access is required.');
         }
 
+        // guardian_email is still a students column; class and section are not.
         $students = Student::query()
             ->where('guardian_email', $user->email)
-            ->orderBy('class_name')
-            ->orderBy('section')
-            ->orderBy('roll_number')
-            ->get(['id', 'name', 'class_name', 'section', 'roll_number', 'photo_path']);
+            ->with(StudentTaxonomyFilter::eagerLoad());
 
-        return response()->json(['data' => $students]);
+        StudentTaxonomyFilter::orderByClassAndSection($students)->orderBy('roll_number');
+
+        $students = $students->get(['id', 'name', 'roll_number', 'photo_path']);
+
+        // Spelled out rather than serialising the model: the derived accessor
+        // is named section_name, and this payload's key is `section`.
+        return response()->json([
+            'data' => $students->map(fn (Student $child) => [
+                'id' => $child->id,
+                'name' => $child->name,
+                'class_name' => $child->class_name,
+                'section' => $child->section_name,
+                'roll_number' => $child->roll_number,
+                'photo_path' => $child->photo_path,
+            ])->values(),
+        ]);
     }
 
     public function report(Request $request, Student $student): JsonResponse
@@ -63,7 +77,13 @@ class ParentViewController extends Controller
         $ppsResults = $this->buildPpsResults($student, $request->integer('exam_id') ?: null);
 
         return response()->json([
-            'student' => $student->only(['id', 'name', 'class_name', 'section', 'photo_path']),
+            'student' => [
+                'id' => $student->id,
+                'name' => $student->name,
+                'class_name' => $student->class_name,
+                'section' => $student->section_name,
+                'photo_path' => $student->photo_path,
+            ],
             'period' => $period,
             'support_status' => $this->insights->buildWellbeing($student, $request->user()),
             'context' => $this->insights->buildContext($student, $request->user()),

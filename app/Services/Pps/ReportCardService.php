@@ -6,7 +6,10 @@ use App\Models\Pps\ComputedScore;
 use App\Models\Pps\Exam;
 use App\Models\Pps\ExamComponent;
 use App\Models\Pps\Mark;
-use App\Models\Student;
+use App\Support\StudentTaxonomyFilter;
+use SmsCore\Models\Student;
+use SmsCore\Models\Subject;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Mpdf\Mpdf;
 
@@ -19,13 +22,16 @@ class ReportCardService
      */
     public function generate(int $studentId, int $examId): string
     {
-        $student  = Student::query()->with('stream')->findOrFail($studentId);
+        $student  = Student::query()->with(StudentTaxonomyFilter::eagerLoad())->findOrFail($studentId);
         $exam     = Exam::with(['examType', 'components'])->findOrFail($examId);
         $summary  = $this->buildSummary($examId, $studentId);
 
-        $classLevel = (int) $student->class_name;
+        // class_levels.numeric_order is the sortable rank (Nursery=0, KG=1,
+        // Class 1=2 … Class 12=13), so Class 11 — where the college formats and
+        // the group split begin — is 12.
+        $numericOrder = (int) ($student->currentEnrollment?->section?->classLevel?->numeric_order ?? 0);
 
-        $html = $classLevel >= 11
+        $html = $numericOrder >= 12
             ? $this->buildFormatB($student, $exam, $summary)
             : $this->buildFormatA($student, $exam, $summary);
 
@@ -133,9 +139,10 @@ class ReportCardService
         $computedScores = ComputedScore::query()
             ->where('exam_id', $exam->id)
             ->where('student_id', $student->id)
-            ->with('subject:id,name')
             ->orderBy('subject_id')
             ->get();
+
+        $subjectNames = $this->subjectNames($computedScores);
 
         $isSecondTerm = $exam->term === 2
             || str_contains(strtolower($exam->title ?? ''), '2nd')
@@ -144,7 +151,7 @@ class ReportCardService
         $subjectRows = '';
         foreach ($computedScores as $i => $cs) {
             $bg = ($i % 2 === 0) ? '#ffffff' : '#f5f7fb';
-            $subjectName = htmlspecialchars($cs->subject?->name ?? '');
+            $subjectName = htmlspecialchars($subjectNames[$cs->subject_id] ?? '');
             $subjectId   = $cs->subject_id;
             $codes       = $marksBySubjectCode[$subjectId] ?? [];
 
@@ -196,7 +203,7 @@ class ReportCardService
         $workingDays    = $summary['total_working_days']              ?? '—';
         $presence       = $summary['total_presence']                  ?? '—';
         $gpaColor       = $this->gpaColor((float) ($summary['gpa']    ?? 0));
-        $stream         = htmlspecialchars($student->stream?->name    ?? '—');
+        $stream         = htmlspecialchars($this->groupLabel($student));
         $examYear       = isset($exam->exam_date) ? date('Y', strtotime($exam->exam_date)) : date('Y');
         $examTitle      = htmlspecialchars($exam->title ?? '');
 
@@ -288,14 +295,15 @@ class ReportCardService
         $computedScores = ComputedScore::query()
             ->where('exam_id', $exam->id)
             ->where('student_id', $student->id)
-            ->with('subject:id,name')
             ->orderBy('subject_id')
             ->get();
+
+        $subjectNames = $this->subjectNames($computedScores);
 
         $subjectRows = '';
         foreach ($computedScores as $i => $cs) {
             $bg          = ($i % 2 === 0) ? '#ffffff' : '#f5f7fb';
-            $subjectName = htmlspecialchars($cs->subject?->name ?? '');
+            $subjectName = htmlspecialchars($subjectNames[$cs->subject_id] ?? '');
             $codes       = $marksBySubjectCode[$cs->subject_id] ?? [];
             $gradeColor  = $this->gradeColor($cs->letter_grade);
 
@@ -331,7 +339,7 @@ class ReportCardService
         $promotionText  = $summary['is_promoted'] === true ? 'Promoted' : ($summary['is_promoted'] === false ? 'Not Promoted' : '—');
         $promotionColor = $summary['is_promoted'] === true ? '#166534' : ($summary['is_promoted'] === false ? '#991b1b' : '#555');
         $gpaColor       = $this->gpaColor((float) ($summary['gpa'] ?? 0));
-        $stream         = htmlspecialchars($student->stream?->name ?? '—');
+        $stream         = htmlspecialchars($this->groupLabel($student));
         $examYear       = isset($exam->exam_date) ? date('Y', strtotime($exam->exam_date)) : date('Y');
         $examTitle      = htmlspecialchars($exam->title ?? '');
 
@@ -402,13 +410,14 @@ class ReportCardService
         // Get distinct subjects from computed scores
         $subjectRows = ComputedScore::query()
             ->where('exam_id', $exam->id)
-            ->with('subject:id,name')
             ->get()
             ->unique('subject_id')
             ->sortBy('subject_id')
             ->values();
 
-        $subjectHeaders = $subjectRows->map(fn ($cs) => "<th>" . htmlspecialchars($cs->subject?->name ?? '') . "</th>")->implode('');
+        $subjectNames = $this->subjectNames($subjectRows);
+
+        $subjectHeaders = $subjectRows->map(fn ($cs) => "<th>" . htmlspecialchars($subjectNames[$cs->subject_id] ?? '') . "</th>")->implode('');
 
         $rows = '';
         foreach ($students as $i => $student) {
@@ -468,13 +477,14 @@ class ReportCardService
     {
         $subjectRows = ComputedScore::query()
             ->where('exam_id', $exam->id)
-            ->with('subject:id,name')
             ->get()
             ->unique('subject_id')
             ->sortBy('subject_id')
             ->values();
 
-        $subjectHeaders = $subjectRows->map(fn ($cs) => "<th>" . htmlspecialchars($cs->subject?->name ?? '') . "</th>")->implode('');
+        $subjectNames = $this->subjectNames($subjectRows);
+
+        $subjectHeaders = $subjectRows->map(fn ($cs) => "<th>" . htmlspecialchars($subjectNames[$cs->subject_id] ?? '') . "</th>")->implode('');
 
         $rows = '';
         foreach ($students as $i => $student) {
@@ -548,13 +558,38 @@ class ReportCardService
         </table>";
     }
 
+    /**
+     * Subject titles keyed by id. pps_computed_scores carries only subject_id and
+     * subjects now live in sms-core under full_name, so resolve the whole set in
+     * one query rather than per row.
+     *
+     * @return Collection<int, string>
+     */
+    private function subjectNames(Collection $scores): Collection
+    {
+        return Subject::query()
+            ->whereIn('id', $scores->pluck('subject_id')->unique()->all())
+            ->pluck('full_name', 'id');
+    }
+
+    /**
+     * What the report card used to print as "stream". Streams and departments are
+     * both gone; the college group now hangs off the student's class level.
+     */
+    private function groupLabel(Student $student): string
+    {
+        $group = $student->currentEnrollment?->section?->classLevel?->group;
+
+        return $group === null ? '—' : ucwords(str_replace('_', ' ', $group));
+    }
+
     private function studentInfoTable(Student $student, Exam $exam, string $stream): string
     {
         $name    = htmlspecialchars($student->name ?? '');
         $code    = htmlspecialchars($student->student_code ?? '');
         $roll    = $student->roll_number ?? '—';
         $class   = $student->class_name ?? '—';
-        $section = $student->section ?? '—';
+        $section = $student->section_name ?? '—';
         $gender  = ucfirst($student->gender ?? '—');
 
         return "

@@ -1,11 +1,12 @@
 <?php
 
 use App\Http\Controllers\Api\V1\Auth\AuthController;
+use App\Http\Controllers\Api\V1\Platform\PlatformAuthController;
+use App\Http\Controllers\Api\V1\Platform\PlatformTenantController;
 use App\Http\Controllers\Api\V1\Pps\AlertController;
 use App\Http\Controllers\Api\V1\Pps\AdministrationController;
 use App\Http\Controllers\Api\V1\Pps\MarksController;
 use App\Http\Controllers\Api\V1\Pps\MarksMetaController;
-use App\Http\Controllers\Api\V1\Pps\PretestMarksController;
 use App\Http\Controllers\Api\V1\Pps\ExamListController;
 use App\Http\Controllers\Api\V1\Pps\ResultSummaryController;
 use App\Http\Controllers\Api\V1\Pps\AttendanceController;
@@ -13,6 +14,7 @@ use App\Http\Controllers\Api\V1\Pps\BehaviorController;
 use App\Http\Controllers\Api\V1\Pps\ClassroomRatingController;
 use App\Http\Controllers\Api\V1\Pps\CounselingController;
 use App\Http\Controllers\Api\V1\Pps\DashboardController;
+use App\Http\Controllers\Api\V1\Pps\EarlyWarningController;
 use App\Http\Controllers\Api\V1\Pps\ExtracurricularController;
 use App\Http\Controllers\Api\V1\Pps\NoticeController;
 use App\Http\Controllers\Api\V1\Pps\NotificationController;
@@ -20,33 +22,70 @@ use App\Http\Controllers\Api\V1\Pps\ParentViewController;
 use App\Http\Controllers\Api\V1\Pps\ReportController;
 use App\Http\Controllers\Api\V1\Pps\SchoolPpsConfigController;
 use App\Http\Controllers\Api\V1\Pps\StudentPerformanceController;
+use App\Http\Controllers\Api\V1\Pps\Student360Controller;
 use App\Http\Controllers\Api\V1\Pps\UserManagementController;
 use App\Http\Controllers\Api\V1\Pps\RolePermissionController;
 use App\Http\Controllers\Api\V1\Pps\WelfareController;
 use App\Http\Controllers\Api\V1\Pps\ClassStructureController;
 use Illuminate\Support\Facades\Route;
 
+/*
+|--------------------------------------------------------------------------
+| Platform console — central host only
+|--------------------------------------------------------------------------
+|
+| The mirror of the school API below. `tenant` still runs first (it is what
+| decides whether this host names a school at all), then `central` 404s the
+| request if it did resolve one. So radar.test serves these and
+| cpscs.radar.test does not, exactly as cpscs.radar.test serves /api/v1/pps/*
+| and radar.test does not.
+|
+| Everything here reads and writes central tables only. A platform admin token
+| is not a school token: see config/auth.php for why the two cannot cross.
+|
+*/
+Route::prefix('v1/platform/auth')
+    ->middleware(['tenant', 'central', 'throttle:platform-auth', 'pps.security'])
+    ->group(function (): void {
+        Route::post('/login', [PlatformAuthController::class, 'login']);
+    });
+
+Route::prefix('v1/platform')
+    ->middleware(['tenant', 'central', 'auth:admin', 'platform.admin', 'throttle:platform-api', 'pps.security'])
+    ->group(function (): void {
+        Route::get('/auth/me', [PlatformAuthController::class, 'me']);
+        Route::post('/auth/logout', [PlatformAuthController::class, 'logout']);
+
+        Route::get('/tenants', [PlatformTenantController::class, 'index']);
+        Route::post('/tenants', [PlatformTenantController::class, 'store']);
+        Route::patch('/tenants/{tenant}/products/{product}', [PlatformTenantController::class, 'updateProduct']);
+    });
+
 Route::prefix('v1/auth')
-    ->middleware(['throttle:pps-auth', 'pps.security'])
+    ->middleware(['tenant', 'product:radar', 'throttle:pps-auth', 'pps.security'])
     ->group(function (): void {
         Route::post('/login', [AuthController::class, 'login']);
     });
 
 Route::prefix('v1/auth')
-    ->middleware(['auth:sanctum', 'throttle:pps-api', 'pps.security'])
+    ->middleware(['tenant', 'product:radar', 'auth:sanctum', 'throttle:pps-api', 'pps.security'])
     ->group(function (): void {
         Route::get('/me', [AuthController::class, 'me']);
         Route::post('/logout', [AuthController::class, 'logout']);
     });
 
 Route::prefix('v1/pps')
-    ->middleware(['auth:sanctum', 'throttle:pps-api', 'pps.security'])
+    ->middleware(['tenant', 'product:radar', 'auth:sanctum', 'throttle:pps-api', 'pps.security'])
     ->group(function (): void {
     Route::get('/dashboard/summary', [DashboardController::class, 'summary'])
         ->middleware('pps.can:dashboard.view');
     Route::get('/alerts', [AlertController::class, 'index'])
         ->middleware('pps.can:alerts.view');
     Route::patch('/alerts/{alert}/resolve', [DashboardController::class, 'resolve'])
+        ->middleware('pps.can:alerts.resolve');
+    Route::get('/early-warnings', [EarlyWarningController::class, 'index'])
+        ->middleware('pps.can:alerts.view');
+    Route::patch('/early-warnings/{warning}/acknowledge', [EarlyWarningController::class, 'acknowledge'])
         ->middleware('pps.can:alerts.resolve');
 
     Route::get('/students/search', [StudentPerformanceController::class, 'quickSearch'])
@@ -65,6 +104,16 @@ Route::prefix('v1/pps')
         ->middleware('pps.can:students.what_if');
     Route::get('/students/{student}/counseling', [CounselingController::class, 'studentSessions'])
         ->middleware('pps.can:students.counseling');
+
+    // Student 360 — single-page view; lives beside the classic profile.
+    Route::get('/students/{student}/360', [Student360Controller::class, 'show'])
+        ->middleware('pps.can:students.view');
+    Route::post('/students/{student}/notify-teachers', [Student360Controller::class, 'notifyTeachers'])
+        ->middleware('pps.can:notifications.run');
+    Route::post('/students/{student}/tuitions', [Student360Controller::class, 'storeTuition'])
+        ->middleware('pps.can:students.context_update');
+    Route::delete('/students/{student}/tuitions/{tuition}', [Student360Controller::class, 'destroyTuition'])
+        ->middleware('pps.can:students.context_update');
 
     Route::get('/classes/structure', [ClassStructureController::class, 'index'])
         ->middleware('pps.can:students.view');
@@ -218,11 +267,6 @@ Route::prefix('v1/pps')
     Route::post('/marks', [MarksController::class, 'bulkStore'])
         ->middleware('pps.can:marks.write');
 
-    // Legacy marks entry — kept for pretest (not migrated)
-    Route::get('/marks/pretest', [PretestMarksController::class, 'index'])
-        ->middleware('pps.can:marks.read');
-    Route::post('/marks/pretest', [PretestMarksController::class, 'bulkStore'])
-        ->middleware('pps.can:marks.write');
 
     // Result summary — GET is read, POST compute is write
     Route::get('/results/meta', [ResultSummaryController::class, 'meta'])

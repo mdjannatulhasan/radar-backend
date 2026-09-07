@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Pps\PerformanceSnapshot;
 use App\Models\Pps\PpsAlert;
 use App\Services\Pps\TrendAnalyzerService;
+use App\Support\StudentTaxonomyFilter;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -37,13 +38,23 @@ class DashboardController extends Controller
             ")
             ->first();
 
+        // class + section are no longer columns on students: a student reaches
+        // its class through the CURRENT year's enrollment -> section ->
+        // class_level + section_name. A student with no current enrollment has
+        // no class and so contributes to no row.
         $classOverview = PerformanceSnapshot::query()
             ->forPeriod($period)
-            ->join('students', 'students.id', '=', 'pps_performance_snapshots.student_id')
-            ->groupBy('students.class_name', 'students.section')
+            ->join('student_enrollments as se', 'se.student_id', '=', 'pps_performance_snapshots.student_id')
+            ->join('academic_years as ay', function ($join): void {
+                $join->on('ay.id', '=', 'se.academic_year_id')->where('ay.is_current', true);
+            })
+            ->join('sections as sec', 'sec.id', '=', 'se.section_id')
+            ->join('class_levels as cl', 'cl.id', '=', 'sec.class_level_id')
+            ->join('section_names as sn', 'sn.id', '=', 'sec.section_name_id')
+            ->groupBy('cl.id', 'cl.name', 'cl.numeric_order', 'sn.name')
             ->selectRaw("
-                students.class_name,
-                students.section,
+                cl.name as class_name,
+                sn.name as section,
                 COUNT(*) as total,
                 AVG(overall_score) as avg_score,
                 AVG(academic_score) as avg_academic,
@@ -52,8 +63,9 @@ class DashboardController extends Controller
                 SUM(CASE WHEN alert_level = 'warning' THEN 1 ELSE 0 END) as warning,
                 SUM(CASE WHEN alert_level = 'watch' THEN 1 ELSE 0 END) as watch
             ")
-            ->orderBy('students.class_name')
-            ->orderBy('students.section')
+            ->orderBy('cl.numeric_order')
+            ->orderBy('cl.name')
+            ->orderBy('sn.name')
             ->get()
             ->map(fn ($row) => [
                 'class_name' => $row->class_name,
@@ -71,7 +83,10 @@ class DashboardController extends Controller
         $urgentStudents = PerformanceSnapshot::query()
             ->forPeriod($period)
             ->where('alert_level', 'urgent')
-            ->with('student:id,name,class_name,section,roll_number,photo_path')
+            ->with(array_merge(
+                ['student:id,name,roll_number,photo_path'],
+                StudentTaxonomyFilter::eagerLoadVia('student'),
+            ))
             ->orderByDesc('risk_score')
             ->limit(20)
             ->get([
@@ -85,7 +100,10 @@ class DashboardController extends Controller
 
         $activeAlerts = PpsAlert::query()
             ->whereNull('resolved_at')
-            ->with('student:id,name,class_name,section,roll_number')
+            ->with(array_merge(
+                ['student:id,name,roll_number'],
+                StudentTaxonomyFilter::eagerLoadVia('student'),
+            ))
             ->orderByRaw("CASE alert_level WHEN 'urgent' THEN 1 WHEN 'warning' THEN 2 ELSE 3 END")
             ->orderByDesc('created_at')
             ->limit(15)

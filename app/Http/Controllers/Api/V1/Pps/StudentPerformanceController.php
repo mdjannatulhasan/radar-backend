@@ -3,7 +3,6 @@
 namespace App\Http\Controllers\Api\V1\Pps;
 
 use App\Http\Controllers\Controller;
-use App\Models\Pps\AcademicYear;
 use App\Models\Pps\ComputedScore;
 use Illuminate\Support\Facades\DB;
 use App\Models\Pps\Mark;
@@ -13,8 +12,11 @@ use App\Models\Pps\CounselingSession;
 use App\Models\Pps\Extracurricular;
 use App\Models\Pps\PerformanceSnapshot;
 use App\Models\Pps\PpsAlert;
-use App\Models\Student;
-use App\Models\User;
+use SmsCore\Models\Section;
+use SmsCore\Models\Student;
+use SmsCore\Models\Subject;
+use SmsCore\Models\Teacher;
+use SmsCore\Models\User;
 use App\Services\Pps\ForecastService;
 use App\Services\Pps\ReportExportService;
 use App\Services\Pps\RecommendationService;
@@ -22,6 +24,8 @@ use App\Services\Pps\SimplePdfService;
 use App\Services\Pps\StudentInsightService;
 use App\Services\Pps\TrendAnalyzerService;
 use App\Services\Pps\WhatIfAnalyzerService;
+use App\Support\StudentTaxonomyFilter;
+use App\Support\TeacherScope;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
@@ -49,52 +53,84 @@ class StudentPerformanceController extends Controller
         $period = $this->resolvePeriod($request);
         $perPage = min(500, max(1, (int) $request->integer('limit', 24)));
 
-        $snapshots = PerformanceSnapshot::query()
+        // level / version / group / class_level_id / section_id: the students
+        // table no longer carries class_name or section to filter on.
+        $filters = StudentTaxonomyFilter::validate($request);
+
+        // The list is driven by students, not by snapshots. It used to be the
+        // other way round, which silently hid every student who had not been
+        // scored yet — including everyone in a newly imported class.
+        $students = Student::query()->with(StudentTaxonomyFilter::eagerLoad());
+
+        $students = StudentTaxonomyFilter::apply($students, $filters);
+
+        if ($viewer?->hasAnyRole('teacher')) {
+            TeacherScope::applyStudentScope($students, $viewer);
+        }
+
+        if ($request->filled('alert_level')) {
+            $students->whereIn('id', PerformanceSnapshot::query()
+                ->forPeriod($period)
+                ->where('alert_level', $request->string('alert_level')->toString())
+                ->select('student_id'));
+        }
+
+        if ($request->filled('search')) {
+            $term = $request->string('search')->toString();
+            $students->where(function (Builder $query) use ($term): void {
+                $query->where('name', 'like', "%{$term}%")
+                    ->orWhere('student_code', 'like', "%{$term}%")
+                    ->orWhere('roll_number', 'like', "%{$term}%");
+            });
+        }
+
+        // Riskiest first, as before — but a student with no snapshot for the
+        // period now sorts last instead of dropping out of the list entirely.
+        $riskScore = PerformanceSnapshot::query()
             ->forPeriod($period)
-            ->with('student:id,name,student_code,class_name,section,roll_number,guardian_name,guardian_phone')
-            ->when($viewer?->hasAnyRole('teacher'), function (Builder $query) use ($viewer): void {
-                $query->whereHas('student', fn (Builder $studentQuery) => $this->applyTeacherStudentScope($studentQuery, $viewer));
-            })
-            ->when(
-                $request->filled('alert_level'),
-                fn (Builder $query) => $query->where('alert_level', $request->string('alert_level')->toString())
-            )
-            ->when($request->filled('class_name'), function (Builder $query) use ($request): void {
-                $query->whereHas('student', fn (Builder $studentQuery) => $studentQuery->where('class_name', $request->string('class_name')->toString()));
-            })
-            ->when($request->filled('section'), function (Builder $query) use ($request): void {
-                $query->whereHas('student', fn (Builder $studentQuery) => $studentQuery->where('section', $request->string('section')->toString()));
-            })
-            ->when($request->filled('search'), function (Builder $query) use ($request): void {
-                $term = $request->string('search')->toString();
-                $query->whereHas('student', function (Builder $studentQuery) use ($term): void {
-                    $studentQuery->where('name', 'like', "%{$term}%")
-                        ->orWhere('student_code', 'like', "%{$term}%")
-                        ->orWhere('roll_number', 'like', "%{$term}%");
-                });
-            })
-            ->orderByDesc('risk_score')
+            ->whereColumn('student_id', 'students.id')
+            ->select('risk_score')
+            ->limit(1)
+            ->getQuery();
+
+        $page = $students
+            ->orderByRaw('COALESCE(('.$riskScore->toSql().'), -1) DESC', $riskScore->getBindings())
+            ->orderBy('students.name')
             ->paginate($perPage);
 
-        $previousScores = $this->latestPreviousOverallScores(
-            $snapshots->getCollection()->pluck('student_id'),
-            $period,
+        $studentIds = $page->getCollection()->pluck('id');
+
+        $snapshots = PerformanceSnapshot::query()
+            ->forPeriod($period)
+            ->whereIn('student_id', $studentIds)
+            ->get()
+            ->keyBy('student_id');
+
+        $previousScores = $this->latestPreviousOverallScores($studentIds, $period);
+
+        $page->setCollection(
+            $page->getCollection()->map(function (Student $student) use ($snapshots, $previousScores, $period): array {
+                $snapshot = $snapshots->get($student->id);
+
+                $row = $snapshot === null
+                    ? ['student_id' => $student->id, 'snapshot_period' => $period, 'trend_delta' => null]
+                    : $this->serializeSnapshotWithTrend($snapshot, $previousScores);
+
+                return array_merge($row, StudentTaxonomyFilter::present($student), [
+                    'student_code' => $student->student_code,
+                    'student' => $student,
+                ]);
+            })
         );
 
-        $snapshots->setCollection(
-            $snapshots->getCollection()->map(
-                fn (PerformanceSnapshot $snapshot) => $this->serializeSnapshotWithTrend($snapshot, $previousScores)
-            )
-        );
-
-        return response()->json($snapshots);
+        return response()->json($page);
     }
 
     public function show(Request $request, Student $student): JsonResponse
     {
         /** @var User|null $viewer */
         $viewer = $request->user();
-        if ($viewer?->hasAnyRole('teacher') && ! $viewer->canAccessStudent($student)) {
+        if ($viewer?->hasAnyRole('teacher') && ! TeacherScope::canAccessStudent($viewer, $student)) {
             abort(Response::HTTP_FORBIDDEN, 'You are not assigned to this student.');
         }
 
@@ -123,7 +159,7 @@ class StudentPerformanceController extends Controller
         $teacherComments = ClassroomRating::query()
             ->where('student_id', $student->id)
             ->whereNotNull('free_comment')
-            ->with('teacher:id,name')
+            ->with('teacher:id,full_name')
             ->orderByDesc('rating_period')
             ->limit(5)
             ->get(['rating_period', 'subject', 'free_comment', 'behavioral_flag', 'teacher_id']);
@@ -139,18 +175,16 @@ class StudentPerformanceController extends Controller
             : [];
 
         return response()->json([
-            'student' => $student->only([
+            'student' => array_merge($student->only([
                 'id',
                 'student_code',
                 'name',
-                'class_name',
-                'section',
                 'roll_number',
                 'photo_path',
                 'guardian_name',
                 'guardian_phone',
                 'guardian_email',
-            ]),
+            ]), StudentTaxonomyFilter::present($student)),
             'period' => $period,
             'current_snapshot' => $snapshot
                 ? $this->serializeSnapshotWithTrend(
@@ -179,12 +213,12 @@ class StudentPerformanceController extends Controller
         $scores = ComputedScore::query()
             ->join('pps_exams', 'pps_exams.id', '=', 'pps_computed_scores.exam_id')
             ->join('pps_exam_types', 'pps_exam_types.id', '=', 'pps_exams.exam_type_id')
-            ->join('pps_subjects', 'pps_subjects.id', '=', 'pps_computed_scores.subject_id')
+            ->join('subjects', 'subjects.id', '=', 'pps_computed_scores.subject_id')
             ->where('pps_computed_scores.student_id', $studentId)
             ->orderBy('pps_exams.academic_year')
             ->orderBy('pps_exams.term')
             ->get([
-                'pps_subjects.name as subject',
+                'subjects.full_name as subject',
                 'pps_exam_types.code as type_code',
                 'pps_exam_types.name as type_name',
                 'pps_exams.id as exam_id',
@@ -200,11 +234,11 @@ class StudentPerformanceController extends Controller
             ->join('pps_exam_components', 'pps_exam_components.id', '=', 'pps_marks.component_id')
             ->join('pps_exams', 'pps_exams.id', '=', 'pps_exam_components.exam_id')
             ->join('pps_exam_types', 'pps_exam_types.id', '=', 'pps_exams.exam_type_id')
-            ->join('pps_subjects', 'pps_subjects.id', '=', 'pps_marks.subject_id')
+            ->join('subjects', 'subjects.id', '=', 'pps_marks.subject_id')
             ->where('pps_marks.student_id', $studentId)
             ->where('pps_exam_types.is_terminal', false)
             ->get([
-                'pps_subjects.name as subject',
+                'subjects.full_name as subject',
                 'pps_exam_types.code as type_code',
                 'pps_exams.exam_date',
                 'pps_marks.marks_obtained',
@@ -276,8 +310,9 @@ class StudentPerformanceController extends Controller
                     ->orWhere('student_code', 'like', "%{$term}%")
                     ->orWhere('roll_number', 'like', "%{$term}%");
             })
+            ->with(StudentTaxonomyFilter::eagerLoad())
             ->limit(10)
-            ->get(['id', 'name', 'student_code', 'class_name', 'section', 'roll_number', 'photo_path']);
+            ->get(['id', 'name', 'student_code', 'roll_number', 'photo_path']);
 
         return response()->json(['data' => $students]);
     }
@@ -368,14 +403,18 @@ class StudentPerformanceController extends Controller
 
     public function enrollmentHistory(Request $request, Student $student): JsonResponse
     {
-        /** @var \App\Models\User|null $viewer */
+        /** @var \SmsCore\Models\User|null $viewer */
         $viewer = $request->user();
-        if ($viewer?->hasAnyRole('teacher') && ! $viewer->canAccessStudent($student)) {
+        if ($viewer?->hasAnyRole('teacher') && ! TeacherScope::canAccessStudent($viewer, $student)) {
             abort(Response::HTTP_FORBIDDEN, 'You are not assigned to this student.');
         }
 
         $enrollments = $student->enrollments()
-            ->with('academicYear:id,year_name,start_date,end_date,is_active')
+            ->with([
+                'academicYear:id,name,start_date,end_date,is_current',
+                'section.classLevel:id,name',
+                'section.sectionName:id,name',
+            ])
             ->orderBy('academic_year_id')
             ->get();
 
@@ -401,16 +440,17 @@ class StudentPerformanceController extends Controller
                 'enrollment_id'  => $enrollment->id,
                 'academic_year'  => $year ? [
                     'id'        => $year->id,
-                    'year_name' => $year->year_name,
-                    'is_active' => $year->is_active,
+                    'year_name' => $year->name,
+                    'is_active' => $year->is_current,
                 ] : null,
-                'class_name'     => $enrollment->class_name,
-                'section'        => $enrollment->section,
+                // An enrollment names a section, which carries the class with it.
+                'class_name'     => $enrollment->section?->classLevel?->name,
+                'section'        => $enrollment->section?->sectionName?->name,
                 'roll_number'    => $enrollment->roll_number,
                 'status'         => $enrollment->status,
-                'is_current'     => $enrollment->is_current,
-                'started_at'     => $enrollment->started_at?->toDateString(),
-                'ended_at'       => $enrollment->ended_at?->toDateString(),
+                'is_current'     => (bool) $year?->is_current,
+                'started_at'     => $year?->start_date?->toDateString(),
+                'ended_at'       => $year?->end_date?->toDateString(),
                 'snapshot_count' => $snapshots->count(),
                 'avg_overall'    => $avgOverall !== null ? round($avgOverall, 1) : null,
                 'avg_academic'   => $avgAcademic !== null ? round($avgAcademic, 1) : null,
@@ -446,18 +486,42 @@ class StudentPerformanceController extends Controller
     {
         /** @var User|null $viewer */
         $viewer = $request->user();
-        if ($viewer?->hasAnyRole('teacher') && ! $viewer->isAssignedToClass($className, $section)) {
+        // A class name is ambiguous now — "Class 9" exists once per version —
+        // so this resolves to every matching section rather than picking one.
+        $sectionIds = StudentTaxonomyFilter::sectionIdsForNames($className, $section);
+        $isTeacher = (bool) $viewer?->hasAnyRole('teacher');
+        $teacherSectionIds = $isTeacher
+            ? array_values(array_intersect($sectionIds, TeacherScope::sectionIds($viewer)))
+            : $sectionIds;
+
+        if ($isTeacher && $teacherSectionIds === []) {
             abort(Response::HTTP_FORBIDDEN, 'You are not assigned to this class.');
         }
 
-        $visibleSubjects = $viewer?->hasAnyRole('teacher') ? $viewer->assignedSubjectsForClass($className, $section) : [];
-        $fullSubjectVisibility = ! $viewer?->hasAnyRole('teacher') || $viewer->isClassTeacherForClass($className, $section);
+        $visibleSubjectIds = [];
+        $fullSubjectVisibility = true;
+
+        if ($isTeacher) {
+            foreach ($teacherSectionIds as $teacherSectionId) {
+                $visibleSubjectIds = array_merge(
+                    $visibleSubjectIds,
+                    TeacherScope::assignedSubjectIdsForSection($viewer, $teacherSectionId),
+                );
+            }
+
+            $visibleSubjectIds = array_values(array_unique($visibleSubjectIds));
+            $fullSubjectVisibility = collect($teacherSectionIds)
+                ->contains(fn (int $id): bool => TeacherScope::isClassTeacherForSection($viewer, $id));
+        }
+
+        $visibleSubjects = $visibleSubjectIds === []
+            ? []
+            : Subject::query()->whereIn('id', $visibleSubjectIds)->pluck('full_name')->all();
 
         $period = $this->resolvePeriod($request);
-        $studentIds = Student::query()
-            ->where('class_name', $className)
-            ->where('section', $section)
-            ->pluck('id');
+        $studentQuery = Student::query();
+        StudentTaxonomyFilter::applySectionIds($studentQuery, $sectionIds);
+        $studentIds = $studentQuery->pluck('id');
 
         $summary = PerformanceSnapshot::query()
             ->whereIn('student_id', $studentIds)
@@ -483,16 +547,16 @@ class StudentPerformanceController extends Controller
         $subjectPerformance = Mark::query()
             ->join('pps_exam_components', 'pps_exam_components.id', '=', 'pps_marks.component_id')
             ->join('pps_exams', 'pps_exams.id', '=', 'pps_exam_components.exam_id')
-            ->join('pps_subjects', 'pps_subjects.id', '=', 'pps_marks.subject_id')
+            ->join('subjects', 'subjects.id', '=', 'pps_marks.subject_id')
             ->whereIn('pps_marks.student_id', $studentIds)
             ->whereYear('pps_exams.exam_date', $year)
             ->when(
-                $viewer?->hasAnyRole('teacher') && ! $fullSubjectVisibility,
-                fn ($query) => $query->whereIn('pps_subjects.name', $visibleSubjects)
+                $isTeacher && ! $fullSubjectVisibility,
+                fn ($query) => $query->whereIn('subjects.id', $visibleSubjectIds ?: [0])
             )
-            ->groupBy('pps_marks.subject_id', 'pps_subjects.name')
+            ->groupBy('pps_marks.subject_id', 'subjects.full_name')
             ->selectRaw("
-                pps_subjects.name as subject,
+                subjects.full_name as subject,
                 ROUND(AVG((pps_marks.marks_obtained / NULLIF(pps_exam_components.max_raw_marks, 0)) * 100), 1) as class_avg,
                 MIN((pps_marks.marks_obtained / NULLIF(pps_exam_components.max_raw_marks, 0)) * 100) as min_score,
                 MAX((pps_marks.marks_obtained / NULLIF(pps_exam_components.max_raw_marks, 0)) * 100) as max_score,
@@ -504,8 +568,8 @@ class StudentPerformanceController extends Controller
                 $schoolAverage = Mark::query()
                     ->join('pps_exam_components', 'pps_exam_components.id', '=', 'pps_marks.component_id')
                     ->join('pps_exams', 'pps_exams.id', '=', 'pps_exam_components.exam_id')
-                    ->join('pps_subjects', 'pps_subjects.id', '=', 'pps_marks.subject_id')
-                    ->where('pps_subjects.name', $row->subject)
+                    ->join('subjects', 'subjects.id', '=', 'pps_marks.subject_id')
+                    ->where('subjects.full_name', $row->subject)
                     ->whereYear('pps_exams.exam_date', $year)
                     ->selectRaw('AVG((pps_marks.marks_obtained / NULLIF(pps_exam_components.max_raw_marks, 0)) * 100) as avg_pct')
                     ->value('avg_pct') ?? 0.0;
@@ -563,7 +627,7 @@ class StudentPerformanceController extends Controller
             'subject_performance' => $subjectPerformance,
             'recommendations' => $this->classRecommendations($subjectPerformance->all(), $summary),
             'viewer_scope' => [
-                'is_class_teacher' => $viewer?->hasAnyRole('teacher') ? $viewer->isClassTeacherForClass($className, $section) : false,
+                'is_class_teacher' => $isTeacher && $fullSubjectVisibility,
                 'subjects' => $fullSubjectVisibility ? [] : $visibleSubjects,
             ],
             'class_trend' => $classTrend->map(fn ($point) => [
@@ -596,25 +660,32 @@ class StudentPerformanceController extends Controller
             $year = (int) substr($p, 0, 4);
             $month = (int) substr($p, 5, 2);
 
+            // An assignment now names a section and a subject id outright, so the
+            // old string join on (class_name, section) and on subject NAME is
+            // replaced by real keys through the current year's enrollments.
             return DB::table('pps_teacher_assignments as ta')
-                ->join('students as s', function ($join) {
-                    $join->on('s.class_name', '=', 'ta.class_name')
-                         ->on('s.section', '=', 'ta.section');
+                ->join('student_enrollments as se', 'se.section_id', '=', 'ta.section_id')
+                ->join('academic_years as ay', function ($join) {
+                    $join->on('ay.id', '=', 'se.academic_year_id')
+                         ->where('ay.is_current', '=', true);
                 })
-                ->join('pps_marks as m', 'm.student_id', '=', 's.id')
-                ->join('pps_subjects as sub', function ($join) {
-                    $join->on('sub.id', '=', 'm.subject_id')
-                         ->whereColumn('sub.name', 'ta.subject');
+                ->join('pps_marks as m', function ($join) {
+                    $join->on('m.student_id', '=', 'se.student_id')
+                         ->on('m.subject_id', '=', 'ta.subject_id');
                 })
+                ->join('subjects as sub', 'sub.id', '=', 'ta.subject_id')
                 ->join('pps_exam_components as ec', 'ec.id', '=', 'm.component_id')
                 ->join('pps_exams as e', 'e.id', '=', 'ec.exam_id')
                 ->whereYear('e.exam_date', $year)
                 ->whereMonth('e.exam_date', $month)
-                ->when($viewer?->hasAnyRole('teacher'), fn ($q) => $q->where('ta.teacher_id', $viewer->id))
-                ->groupBy('ta.teacher_id', 'ta.subject')
+                ->when(
+                    $viewer?->hasAnyRole('teacher'),
+                    fn ($q) => $q->where('ta.teacher_id', TeacherScope::teacherId($viewer) ?? 0)
+                )
+                ->groupBy('ta.teacher_id', 'sub.full_name')
                 ->selectRaw("
                     ta.teacher_id,
-                    ta.subject,
+                    sub.full_name as subject,
                     ROUND(AVG((m.marks_obtained / NULLIF(ec.max_raw_marks, 0)) * 100), 1) as avg_score,
                     COUNT(DISTINCT m.student_id) as student_count,
                     COUNT(*) as assessment_count
@@ -632,8 +703,9 @@ class StudentPerformanceController extends Controller
             ->merge($previous->pluck('teacher_id'))
             ->unique();
 
-        $teacherNames = \App\Models\User::whereIn('id', $allTeacherIds)
-            ->pluck('name', 'id');
+        // teacher_id now points at teachers, not users: most staff have no login.
+        $teacherNames = Teacher::query()->whereIn('id', $allTeacherIds)
+            ->pluck('full_name', 'id');
 
         $effectiveness = $current->map(function ($row) use ($previous, $teacherNames): array {
             $key = "{$row->teacher_id}_{$row->subject}";
@@ -676,14 +748,29 @@ class StudentPerformanceController extends Controller
 
         $query = PerformanceSnapshot::query()
             ->forPeriod($data['period'])
-            ->with('student:id,name,class_name,section,roll_number,guardian_phone');
+            ->with(array_merge(
+                ['student:id,name,roll_number,guardian_phone'],
+                StudentTaxonomyFilter::eagerLoadVia('student'),
+            ));
 
-        if (! empty($data['classes'])) {
-            $query->whereHas('student', fn (Builder $studentQuery) => $studentQuery->whereIn('class_name', $data['classes']));
-        }
+        if (! empty($data['classes']) || ! empty($data['sections'])) {
+            $sectionIds = Section::query()
+                ->when(
+                    ! empty($data['classes']),
+                    fn (Builder $q) => $q->whereHas('classLevel', fn (Builder $cl) => $cl->whereIn('name', $data['classes']))
+                )
+                ->when(
+                    ! empty($data['sections']),
+                    fn (Builder $q) => $q->whereHas('sectionName', fn (Builder $sn) => $sn->whereIn('name', $data['sections']))
+                )
+                ->pluck('id')
+                ->map(fn ($id): int => (int) $id)
+                ->all();
 
-        if (! empty($data['sections'])) {
-            $query->whereHas('student', fn (Builder $studentQuery) => $studentQuery->whereIn('section', $data['sections']));
+            $query->whereHas(
+                'student',
+                fn (Builder $studentQuery) => StudentTaxonomyFilter::applySectionIds($studentQuery, $sectionIds)
+            );
         }
 
         if (! empty($data['alert_levels'])) {
@@ -705,7 +792,7 @@ class StudentPerformanceController extends Controller
                 $results->map(fn ($row) => [
                     $row->student?->name,
                     $row->student?->class_name,
-                    $row->student?->section,
+                    $row->student?->section_name,
                     $row->risk_score,
                     $row->overall_score,
                     $row->alert_level,
@@ -809,28 +896,6 @@ class StudentPerformanceController extends Controller
 
         $latest = PerformanceSnapshot::max('snapshot_period');
         return $latest ?? $requested;
-    }
-
-    private function applyTeacherStudentScope(Builder $query, User $teacher): void
-    {
-        $assignments = $teacher->teacherAssignments()
-            ->get(['class_name', 'section'])
-            ->unique(fn ($assignment) => "{$assignment->class_name}:{$assignment->section}");
-
-        if ($assignments->isEmpty()) {
-            $query->whereRaw('1 = 0');
-            return;
-        }
-
-        $query->where(function (Builder $classQuery) use ($assignments): void {
-            $assignments->each(function ($assignment) use ($classQuery): void {
-                $classQuery->orWhere(function (Builder $studentClassQuery) use ($assignment): void {
-                    $studentClassQuery
-                        ->where('class_name', $assignment->class_name)
-                        ->where('section', $assignment->section);
-                });
-            });
-        });
     }
 
     private function classRecommendations(array $subjects, ?object $summary): array

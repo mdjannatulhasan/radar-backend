@@ -3,7 +3,7 @@
 namespace App\Services\Pps;
 
 use App\Models\Pps\PerformanceSnapshot;
-use App\Models\Student;
+use SmsCore\Models\Student;
 
 class ReportExportService
 {
@@ -17,7 +17,7 @@ class ReportExportService
         if ($lang === 'bn') {
             return [
                 "শিক্ষার্থী: {$student->name}",
-                "শ্রেণি: {$student->class_name}-{$student->section}",
+                "শ্রেণি: {$student->class_name}-{$student->section_name}",
                 'রোল: '.($student->roll_number ?? 'N/A'),
                 "সামগ্রিক স্কোর: {$snapshot->overall_score}",
                 "একাডেমিক: {$snapshot->academic_score}",
@@ -32,7 +32,7 @@ class ReportExportService
 
         return [
             "Student: {$student->name}",
-            "Class: {$student->class_name}-{$student->section}",
+            "Class: {$student->class_name}-{$student->section_name}",
             "Roll: ".($student->roll_number ?? 'N/A'),
             "Overall: {$snapshot->overall_score}",
             "Academic: {$snapshot->academic_score}",
@@ -72,7 +72,7 @@ class ReportExportService
 
         foreach ($snapshots as $snapshot) {
             $student = $snapshot->student;
-            $lines[] = "{$student?->name} | {$student?->class_name}-{$student?->section} | Risk {$snapshot->risk_score} | Alert {$snapshot->alert_level}";
+            $lines[] = "{$student?->name} | {$student?->class_name}-{$student?->section_name} | Risk {$snapshot->risk_score} | Alert {$snapshot->alert_level}";
         }
 
         return $lines;
@@ -124,7 +124,7 @@ class ReportExportService
                 'student_code' => $student?->student_code,
                 'student_name' => $student?->name,
                 'class_name' => $student?->class_name,
-                'section' => $student?->section,
+                'section' => $student?->section_name,
                 'roll_number' => $student?->roll_number,
                 'guardian_name' => $student?->guardian_name,
                 'guardian_phone' => $student?->guardian_phone,

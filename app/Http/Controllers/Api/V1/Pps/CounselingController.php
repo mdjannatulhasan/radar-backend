@@ -5,7 +5,7 @@ namespace App\Http\Controllers\Api\V1\Pps;
 use App\Http\Controllers\Controller;
 use App\Models\Pps\CounselingSession;
 use App\Models\Pps\PpsAlert;
-use App\Models\Student;
+use SmsCore\Models\Student;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;

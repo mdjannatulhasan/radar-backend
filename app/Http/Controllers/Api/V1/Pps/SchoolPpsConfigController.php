@@ -38,6 +38,8 @@ class SchoolPpsConfigController extends Controller
             'notify_guardian_email_on_urgent' => ['nullable', 'boolean'],
             'heatmap_score_critical' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'heatmap_score_attention' => ['nullable', 'numeric', 'min:0', 'max:100'],
+            'early_warning_risk_threshold' => ['nullable', 'numeric', 'min:0', 'max:100'],
+            'early_warning_min_history' => ['nullable', 'integer', 'min:2', 'max:12'],
         ]);
 
         $config = SchoolPpsConfig::current();
